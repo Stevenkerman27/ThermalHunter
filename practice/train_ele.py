@@ -4,17 +4,16 @@ from gymnasium.envs.registration import register
 import numpy as np
 import random 
 import time 
-
 from elevator import ElevatorEnv 
 
 register(
      id="Elevator-v0",         
      entry_point="elevator:ElevatorEnv", # filename, classname
-     max_episode_steps=300 
+     max_episode_steps=50
 )
 
 print("Registered!")
-env = gym.make("Elevator-v0", n_floors=5, reward_deliver=25)
+env = gym.make("Elevator-v0", n_floors=5)
 print("env created")
 
 # ...  Q-learning  ...
@@ -31,7 +30,7 @@ total_episodes = 10000
 
 learning_rate = 0.1  
 
-discount_factor = 0.99
+discount_factor = 0.98
 
 epsilon = 1.0
 max_epsilon = 1.0
@@ -64,10 +63,8 @@ for episode in range(total_episodes):
         # --- step ---
         new_state, reward, terminated, truncated, info = env.step(action)
         
-        # --- Q-Learning formula ---
-        #
-        # Q(s, a) = Q(s, a) + alpha * (R + gamma * max_a'(Q(s', a')) - Q(s, a))
-        #
+        # --- Q-Learning formula, Q(s, a) = Q(s, a) + alpha * (R + gamma * max_a'(Q(s', a')) - Q(s, a))
+
         # old Q 
         old_value = q_table[state, action]
         
@@ -99,10 +96,8 @@ np.save("elevator_q_table.npy", q_table)
 print("Q-table saved as 'elevator_q_table.npy'")
 
 
-
-
-print("\n--- tetsing ---")
-
+print("\n--- testing ---")
+env.unwrapped.verbose = True #设置原本的verbose
 test_episodes = 10
 for episode in range(test_episodes):
     state, info = env.reset(seed=episode)
