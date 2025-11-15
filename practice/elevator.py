@@ -9,6 +9,7 @@ class ElevatorEnv(gym.Env):
                     reward_deliver: int = 20,
                     reward_pickup: int = 10,
                     reward_time_step: int = -1,
+                    verbose: bool = False
                     ):
         super().__init__()  # 继承时需要调用
         
@@ -16,6 +17,7 @@ class ElevatorEnv(gym.Env):
         self.reward_deliver = reward_deliver
         self.reward_pickup = reward_pickup
         self.reward_time_step = reward_time_step
+        self.verbose = verbose
         # 定义动作空间 (Action Space) 
         self.action_space = spaces.Discrete(3)
 
@@ -31,9 +33,7 @@ class ElevatorEnv(gym.Env):
             2: "Move Up"
         }
 
-        # 定义观测空间 (Observation Space) ===
-
-        # 我们必须计算出状态的总数
+        # 定义观测空间 (Observation Space)
         self.n_floor_states = n_floors                   # 5
         self.n_car_call_states = 2**n_floors             # 2^5 = 32
         self.n_hall_up_states = 2**(n_floors - 1)      # 2^4 = 16
@@ -90,8 +90,18 @@ class ElevatorEnv(gym.Env):
             res = (res << 1) | bit
         return res
 
-    def _generate_random_request(self):
-        self._passengers_waiting[0, 3] = 1  #0楼去3楼一个人
+    def _generate_random_request(self, passengers):
+        for i in range(passengers):
+            start_floor = self.np_random.integers(0, self.n_floors)
+            
+            end_floor = self.np_random.integers(0, self.n_floors)
+            
+            while end_floor == start_floor:
+                end_floor = self.np_random.integers(0, self.n_floors)
+
+            self._passengers_waiting[start_floor, end_floor] += 1
+            if self.verbose:
+                print(f"  -> Passenger {i+1}: from {start_floor} to {end_floor}")
 
     def reset(self, seed=None, options=None):
         # 调用父类的 reset 来处理随机种子
@@ -106,7 +116,7 @@ class ElevatorEnv(gym.Env):
         self._passengers_waiting.fill(0)
         self._passengers_in_car.fill(0)
 
-        self._generate_random_request()
+        self._generate_random_request(3)
             
         observation = self._get_obs()
     
@@ -160,7 +170,6 @@ class ElevatorEnv(gym.Env):
         
         return observation, reward, terminated, truncated, info
 
-
     def _get_info(self):
         # 查找动作名字 
         action_name = "N/A (Reset)" # 默认值 (如果 _last_action 还是 -1)
@@ -177,7 +186,7 @@ if __name__ == "__main__":
     print("--- 开始测试电梯环境 ---")
 
     try:
-        env = ElevatorEnv(n_floors=5, reward_deliver=20, reward_pickup=10, reward_time_step=1)
+        env = ElevatorEnv(n_floors=5, verbose=True)
         print(f"环境创建成功!")
         print(f"动作空间: {env.action_space}")
         print(f"观测空间总数: {env.observation_space.n}")
@@ -186,7 +195,6 @@ if __name__ == "__main__":
         exit() # 如果创建失败，后续无法进行
 
     # 2. 测试 reset() 函数
-    #    我们将多次调用它，检查其随机性
     print("\n--- 测试 reset() 函数 (调用5次) ---")
     
     for i in range(5):
