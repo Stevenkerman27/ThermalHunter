@@ -6,10 +6,13 @@ class ElevatorEnv(gym.Env):
 
     def __init__(self, 
                     n_floors: int = 5,
+                    passengers: int = 5,
                     reward_deliver: int = 20,
                     reward_pickup: int = 10,
                     reward_time_step: int = -1,
-                    verbose: bool = False
+                    reward_falseopen: int = -5,
+                    reward_outrange: int = -5,
+                    verbose: bool = False,
                     ):
         super().__init__()  # 继承时需要调用
         
@@ -17,6 +20,9 @@ class ElevatorEnv(gym.Env):
         self.reward_deliver = reward_deliver
         self.reward_pickup = reward_pickup
         self.reward_time_step = reward_time_step
+        self.reward_falseopen = reward_falseopen
+        self.reward_outrange = reward_outrange
+        self.passengers = passengers
         self.verbose = verbose
         # 定义动作空间 (Action Space) 
         self.action_space = spaces.Discrete(3)
@@ -116,7 +122,7 @@ class ElevatorEnv(gym.Env):
         self._passengers_waiting.fill(0)
         self._passengers_in_car.fill(0)
 
-        self._generate_random_request(3)
+        self._generate_random_request(self.passengers)
             
         observation = self._get_obs()
     
@@ -129,35 +135,45 @@ class ElevatorEnv(gym.Env):
         move = self._action_to_move[action]  # 'move' 将是 -1, 0, 或 1
         reward = self.reward_time_step 
         if move == 0:
+            # --- 乘客下车 ---
             passengers_getting_off = self._passengers_in_car[self._current_floor]
             if passengers_getting_off > 0:
-                self._passengers_in_car[self._current_floor] = 0 # 他们下车了
-                reward += passengers_getting_off * self.reward_deliver  # 巨大奖励！
-            
-            # 检查想“上行”的乘客
-            passengers_on_up_count = self._passengers_waiting[self._current_floor, (self._current_floor + 1):].sum()
+                self._passengers_in_car[self._current_floor] = 0
+                reward += passengers_getting_off * self.reward_deliver
+
+            # --- 上行乘客 ---
+            passengers_on_up_count = self._passengers_waiting[self._current_floor, self._current_floor+1:].sum()
             if passengers_on_up_count > 0:
-                for j in range(self._current_floor + 1, self.n_floors):
+                for j in range(self._current_floor+1, self.n_floors):
                     num = self._passengers_waiting[self._current_floor, j]
                     if num > 0:
-                        self._passengers_in_car[j] += num # 乘客进入电梯
-                        self._passengers_waiting[self._current_floor, j] = 0 # 乘客离开等待区
+                        self._passengers_in_car[j] += num
+                        self._passengers_waiting[self._current_floor, j] = 0
                 reward += passengers_on_up_count * self.reward_pickup
-                
-            # 检查想“下行”的乘客
+
+            # --- 下行乘客 ---
             passengers_on_down_count = self._passengers_waiting[self._current_floor, :self._current_floor].sum()
             if passengers_on_down_count > 0:
                 for j in range(0, self._current_floor):
                     num = self._passengers_waiting[self._current_floor, j]
                     if num > 0:
-                        self._passengers_in_car[j] += num # 乘客进入电梯
-                        self._passengers_waiting[self._current_floor, j] = 0 # 乘客离开等待区
+                        self._passengers_in_car[j] += num
+                        self._passengers_waiting[self._current_floor, j] = 0
                 reward += passengers_on_down_count * self.reward_pickup
+
+            # --- false-open 判断（完全没有乘客上下）---
+            if (passengers_getting_off == 0 
+                and passengers_on_up_count == 0 
+                and passengers_on_down_count == 0):
+                reward += self.reward_falseopen
+
         else:
-            self._current_floor += move
-            # 边界检查
-            self._current_floor = np.clip(self._current_floor, 0, self.n_floors - 1)
-            # 奖励保持为 -1
+            # ===== 非法动作：顶层上行 or 底层下行 =====
+            if (self._current_floor == 0 and move == -1) or \
+            (self._current_floor == self.n_floors - 1 and move == 1):
+                reward += self.reward_outrange
+            else:
+                self._current_floor += move
 
         # 检查任务是否结束 (Terminated),如果电梯里没人了，并且外面也没人等了
         total_requests = self._passengers_waiting.sum() + self._passengers_in_car.sum()
