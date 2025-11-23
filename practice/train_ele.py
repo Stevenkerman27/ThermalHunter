@@ -1,6 +1,7 @@
 # --- train.py ---
 import gymnasium as gym
 from gymnasium.envs.registration import register
+import matplotlib.pyplot as plt
 import numpy as np
 import random 
 import time 
@@ -12,8 +13,13 @@ register(
      max_episode_steps=50
 )
 
+n_passengers = 10
+reward_pickup = 10
+reward_deliver = 20
+max_reward = n_passengers * (reward_pickup + reward_deliver)
+
 print("Registered!")
-env = gym.make("Elevator-v0", n_floors=5)
+env = gym.make("Elevator-v0", n_floors = 5, passengers = n_passengers, reward_pickup = reward_pickup, reward_deliver = reward_deliver)
 print("env created")
 
 # ...  Q-learning  ...
@@ -23,23 +29,27 @@ action_space_size = env.action_space.n     # 3
 # initialize Q table
 q_table = np.zeros((state_space_size, action_space_size))
 
-print(f"Q-table 创建成功，形状: {q_table.shape}")
+print(f"Q-table shape: {q_table.shape}")
 
 # hyper parameter
-total_episodes = 10000
+total_episodes = 100000
+sessions = total_episodes / 10
 
 learning_rate = 0.1  
 
-discount_factor = 0.98
+discount_factor = 0.7
 
 epsilon = 1.0
 max_epsilon = 1.0
-min_epsilon = 0.01
+min_epsilon = 0.1
 
 epsilon_decay_rate = (max_epsilon - min_epsilon) / total_episodes
 
 print("--- start training ---")
 start_time = time.time()
+total_reward = 0
+
+reward_history = []
 
 # iterate episodes
 for episode in range(total_episodes):
@@ -52,16 +62,15 @@ for episode in range(total_episodes):
     # run actions
     while not terminated and not truncated:
         
-        # --- 4a. 选择动作 (Epsilon-Greedy 策略) ---
+        # Epsilon-Greedy
         if np.random.uniform(0, 1) < epsilon:
-            # 探索：随机选择一个动作
-            action = env.action_space.sample() # (0, 1, 或 2)
+            action = env.action_space.sample() # (0, 1, 2)
         else:
-            # 利用：从 Q-table 中选择 Q 值最高的动作
             action = np.argmax(q_table[state, :])
 
         # --- step ---
         new_state, reward, terminated, truncated, info = env.step(action)
+        total_reward += reward
         
         # --- Q-Learning formula, Q(s, a) = Q(s, a) + alpha * (R + gamma * max_a'(Q(s', a')) - Q(s, a))
 
@@ -83,8 +92,11 @@ for episode in range(total_episodes):
     epsilon = max(min_epsilon, epsilon - epsilon_decay_rate)
     
     # print training progress
-    if (episode + 1) % 1000 == 0:
-        print(f"Episode {episode + 1}/{total_episodes} - Epsilon: {epsilon:.4f}")
+    if (episode + 1) % sessions == 0:
+        avg_reward = total_reward / sessions / max_reward
+        reward_history.append(avg_reward)
+        print(f"Episode {episode + 1}/{total_episodes} - Epsilon: {epsilon:.4f} - Score:{avg_reward / max_reward}")
+        total_reward = 0
 
 # --- training ends ---
 end_time = time.time()
@@ -95,10 +107,23 @@ print(f"used: {end_time - start_time:.2f} s")
 np.save("elevator_q_table.npy", q_table)
 print("Q-table saved as 'elevator_q_table.npy'")
 
+# === 新增：画 reward_history 图 ===
+plt.figure(figsize=(8,4))
+plt.plot(np.arange(1, len(reward_history)+1) * sessions, reward_history)
+plt.xlabel("Episode")
+plt.ylabel("Average Score (per 1000 episodes)")
+plt.title("Training Reward Curve")
+plt.grid(True)
+plt.show()
+
+# === 新增：打印 Q-table 稀疏度 ===
+nonzero = np.count_nonzero(q_table)
+total = q_table.size
+print(f"\nQ-table non-zero entries: {nonzero}/{total}  ({nonzero/total*100:.2f}% non-zero)")
 
 print("\n--- testing ---")
 env.unwrapped.verbose = True #设置原本的verbose
-test_episodes = 10
+test_episodes = 2
 for episode in range(test_episodes):
     state, info = env.reset(seed=episode)
     terminated = False
