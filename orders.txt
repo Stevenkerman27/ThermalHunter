@@ -1,0 +1,2 @@
+python ppo_continuous_action.py --env-id KellyBetting-v0 --save-model
+tensorboard --logdir runs

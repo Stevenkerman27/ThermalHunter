@@ -16,9 +16,9 @@ register(
 
 # =================配置参数=================
 GRID_SIZE = 25
-NUM_EPISODES = 10000       # 训练总局数
-LEARNING_RATE = 0.5
-GAMMA = 0.6
+NUM_EPISODES = 8000       # 训练总局数
+LEARNING_RATE = 0.01
+GAMMA = 0.1
 EPSILON_START = 1.0
 EPSILON_END = 0.1
 sessions = 1000
@@ -34,8 +34,7 @@ if __name__ == "__main__":
     q_table = np.zeros(q_table_shape)
     
     # 线性衰减设置
-    decay_duration = int(NUM_EPISODES * 0.7)
-    epsilon_decay_step = (EPSILON_START - EPSILON_END) / decay_duration
+    epsilon_decay_step = (EPSILON_START - EPSILON_END) / int(NUM_EPISODES)
     epsilon = EPSILON_START
     
     print(f"环境: {GRID_SIZE}x{GRID_SIZE} Grid | Q-Table Size: {q_table.size}")
@@ -98,7 +97,7 @@ if __name__ == "__main__":
     plt.axhline(y=1.0, color='r', linestyle='--', label='Optimal (1.0)')
 
     # 2. 绘制原始数据（调高透明度，作为背景噪点）
-    plt.plot(data, color='gray', alpha=0.2, label='Raw Ratio')
+    plt.plot(data, color='gray', alpha=0.2, label='Raw Metrics')
 
     # 3. 绘制平滑曲线（核心）
     window_size = int(0.01*episode)  # 窗口大小
@@ -107,15 +106,23 @@ if __name__ == "__main__":
         smooth_data = np.convolve(data, np.ones(window_size)/window_size, mode='valid')
         # 对齐X轴
         x_smooth = np.arange(window_size, len(data) + 1)
-        plt.plot(x_smooth, smooth_data, color='blue', linewidth=2, label='Smoothed Ratio')
+        plt.plot(x_smooth, smooth_data, color='blue', linewidth=2, label='Smoothed Metrics')
 
-    plt.xlabel("Episode")
-    plt.ylabel("Score Ratio (Actual / Max)")
-    plt.title("Normalized Training Performance")
-    plt.ylim(bottom=-2.0, top=1.2) # 限制Y轴视野，忽略初期极差的表现，聚焦后期
-    plt.legend(loc='lower right')
+
+    plt.xlabel("Episode", fontsize=18)
+    plt.ylabel("Metrics", fontsize=18)
+    plt.ylim(bottom=min(smooth_data), top=1.2) # 限制Y轴视野
+    plt.legend(loc='lower right', fontsize=18)
+    plt.tick_params(axis='both', labelsize=16)
     plt.grid(True)
+    plt.tight_layout() # 自动调整布局
     plt.show()
+
+
+    print(f"Q-Table 最大值: {np.max(q_table)}")
+    print(f"Q-Table 最小值: {np.min(q_table)}")
+    print(f"Q-Table 平均值: {np.average(q_table)}")
+    
 
     # === 保存 Q-Table 到文件 ===
     np.save("my_q_table.npy", q_table)
