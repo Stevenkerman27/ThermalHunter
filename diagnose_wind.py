@@ -3,72 +3,67 @@ import os
 import glob
 from glider_discrete import RBWindField
 
-#诊断是否读取出有效的风场
-
 def diagnose_wind_file():
-    # 1. 自动查找文件
+    # 1. 查找所有 snapshot 文件并排序
     wind_dir = os.path.join(os.path.dirname(__file__), 'wind')
-    h5_files = glob.glob(os.path.join(wind_dir, '*.h5'))
+    h5_files = sorted(glob.glob(os.path.join(wind_dir, 'snapshots_s*.h5')))
     
     if not h5_files:
-        print("未找到风场文件！")
+        print("未找到任何风场文件！")
         return
     
-    h5_path = h5_files[0]
-    print(f"正在诊断文件: {h5_path}")
-    
-    # 2. 初始化
-    domain_size = (100.0, 100.0, 100.0) # 这里的尺寸只影响坐标映射，不影响原始数据统计
+    # 2. 初始化 (RBWindField 内部会读取 sim_time 标尺)
+    domain_size = (100.0, 100.0, 100.0)
     try:
-        wf = RBWindField(h5_path, domain_size=domain_size)
+        wf = RBWindField(h5_files, domain_size=domain_size)
     except Exception as e:
         print(f"初始化失败: {e}")
         return
 
     total_steps = wf.max_t_idx + 1
     print(f"总时间步数: {total_steps}")
-    print("-" * 50)
-    print(f"{'Time Idx':<10} | {'Max U':<10} | {'Max V':<10} | {'Max W':<10} | {'Status'}")
-    print("-" * 50)
+    # 调整表头，增加 Sim Time 列
+    print("-" * 80)
+    print(f"{'Global T':<10} | {'File':<6} | {'Sim Time':<10} | {'Max U':<10} | {'Max V':<10} | {'Max W':<10} | {'Status'}")
+    print("-" * 80)
 
-    # 3. 循环扫描每一帧
     non_zero_frames = 0
     
-    # 为了速度，直接读取 HDF5 数据集进行统计，而不是通过插值函数
-    # 这样可以确认是"没读到"还是"数据本身就是0"
-    for t in range(total_steps):
+    for t_global in range(total_steps):
         try:
-            # 直接切片读取原始 Grid 数据
-            # 注意：这里假设数据形状是 (t, x, y, z)
-            u_raw = wf.dsets['ux'][t]
-            v_raw = wf.dsets['uy'][t]
-            w_raw = wf.dsets['uz'][t]
+            # 获取物理时间
+            sim_time = wf.all_sim_times[t_global] 
             
-            # 计算绝对值的最大值
-            max_u = np.max(np.abs(u_raw))
-            max_v = np.max(np.abs(v_raw))
-            max_w = np.max(np.abs(w_raw))
+            # 定位子文件和局部索引 (为了读取原始数据)
+            file_idx = 0
+            for i in range(len(wf.t_offsets) - 1):
+                if wf.t_offsets[i] <= t_global < wf.t_offsets[i+1]:
+                    file_idx = i
+                    break
+            local_t = t_global - wf.t_offsets[file_idx]
             
-            status = "EMPTY"
-            if max_u > 1e-5 or max_v > 1e-5 or max_w > 1e-5:
-                status = "ACTIVE"
-                non_zero_frames += 1
+            # 读取数据
+            current_dsets = wf.dsets_list[file_idx]
+            u_raw = current_dsets['ux'][local_t]
+            v_raw = current_dsets['uy'][local_t]
+            w_raw = current_dsets['uz'][local_t]
             
-            # 只打印 非零帧 或者 某些特定帧（避免刷屏）
-            if status == "ACTIVE" or t % 10 == 0 or t == total_steps - 1:
-                print(f"{t:<10} | {max_u:<10.4f} | {max_v:<10.4f} | {max_w:<10.4f} | {status}")
+            max_u, max_v, max_w = np.max(np.abs(u_raw)), np.max(np.abs(v_raw)), np.max(np.abs(w_raw))
+            
+            status = "ACTIVE" if (max_u > 1e-5 or max_v > 1e-5 or max_w > 1e-5) else "EMPTY"
+            if status == "ACTIVE": non_zero_frames += 1
+            
+            # 打印逻辑
+            if status == "ACTIVE" or t_global % 10 == 0 or t_global == total_steps - 1:
+                file_name = f"s{file_idx+1}"
+                # 格式化输出，sim_time 保留 2 位小数
+                print(f"{t_global:<10} | {file_name:<6} | {sim_time:<10.2f} | {max_u:<10.4f} | {max_v:<10.4f} | {max_w:<10.4f} | {status}")
                 
         except Exception as e:
-            print(f"{t:<10} | 读取出错: {e}")
+            print(f"{t_global:<10} | 读取出错: {e}")
 
-    print("-" * 50)
-    if non_zero_frames == 0:
-        print("警告：整个文件中所有时间步的风速数据似乎都是 0！")
-        print("建议：请检查 HDF5 文件源数据是否正确生成。")
-    else:
-        print(f"诊断完成。共发现 {non_zero_frames} 个有效风场帧。")
-        print("你可以使用 wf.reset(t_index=N) 来指定加载这些有数据的帧。")
-
+    print("-" * 80)
+    print(f"诊断完成。总物理时长: {wf.all_sim_times[-1] - wf.all_sim_times[0]:.2f} (units)")
     wf.close()
 
 if __name__ == "__main__":

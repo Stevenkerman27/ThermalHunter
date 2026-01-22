@@ -7,106 +7,110 @@ import h5py
 import os
 
 class RBWindField:
-    def __init__(self, h5_path, domain_size=(1000, 1000, 1000)):
-        self.h5_path = h5_path
+    def __init__(self, h5_paths, domain_size=(1000, 1000, 1000)):
+        # 支持传入列表或单个路径
+        self.h5_paths = sorted(h5_paths) if isinstance(h5_paths, list) else [h5_paths]
         self.domain_size = np.array(domain_size, dtype=np.float32)
         
-        self.file = None
-        self.dsets = {} 
-        self.scales = np.zeros(3) # x, y, z scales
+        self.files = []
+        self.dsets_list = [] # 存储每个文件的 dataset 引用
+        self.t_offsets = [0] # 时间步偏移映射
         
-        # 此处填入确定的轴索引
-        self.t_axis = 0
-        self.z_axis = 3
-        self.y_axis = 2
-        self.x_axis = 1
-        self.space_range = [0,0,0] # size of domain in dedalus file
+        # 轴索引定义
+        self.t_axis, self.x_axis, self.y_axis, self.z_axis = 0, 1, 2, 3
+        self.space_range = [0, 0, 0]
 
-        self.current_t_idx = 0
-        self.max_t_idx = 0
-        self._open_resource()
+        self.global_t_idx = 0
+        self.current_file_idx = 0
+        self.local_t_idx = 0
+        self.all_sim_times = [] # 新增：存储全局物理时间序列
 
-    def _open_resource(self):
-        if self.file is None:
-            self.file = h5py.File(self.h5_path, 'r')
+        self._open_resources()
+
+    def _open_resources(self):
+        for path in self.h5_paths:
+            f = h5py.File(path, 'r')
+            self.files.append(f)
+            dset_group = {k: f['tasks'][k] for k in ['ux', 'uy', 'uz']}
+            self.dsets_list.append(dset_group)
             
-            for key in ['ux', 'uy', 'uz']:
-                if key not in self.file['tasks']:
-                    raise KeyError(f"Task {key} missing")
-                self.dsets[key] = self.file['tasks'][key]
+            # --- 新增：读取并累加物理时间 ---
+            # 从任意一个 task 中提取 sim_time 标尺
+            file_times = dset_group['ux'].dims[0]['sim_time'][:]
+            self.all_sim_times.extend(file_times)
             
-            # 获取完整 shape (t, dim1, dim2, dim3)
-            full_shape = self.dsets['ux'].shape
-            self.max_t_idx = full_shape[0] - 1
-            
-            self.space_range[0] = full_shape[self.x_axis]# X
-            self.space_range[1] = full_shape[self.y_axis]# X
-            self.space_range[2] = full_shape[self.z_axis]# X
-   
-            print(f"WindField initialized. Shape: {full_shape}")
-            print(f"Axes map: Z={self.z_axis}, Y={self.y_axis}, X={self.x_axis}")
+            file_t_steps = len(file_times)
+            self.t_offsets.append(self.t_offsets[-1] + file_t_steps)
+        
+        self.all_sim_times = np.array(self.all_sim_times)
+        self.max_t_idx = len(self.all_sim_times) - 1
+        
+        # 使用第一个文件初始化空间范围（假设所有 snapshot 空间网格一致）
+        first_shape = self.dsets_list[0]['ux'].shape
+        self.space_range[0] = first_shape[self.x_axis]
+        self.space_range[1] = first_shape[self.y_axis]
+        self.space_range[2] = first_shape[self.z_axis]
+        
+        print(f"WindField initialized with {len(self.files)} files.")
+        print(f"Total time steps: {self.max_t_idx + 1}, Space: {self.space_range}")
+        
+    def get_current_time(self):
+        """返回当前全局索引对应的物理时间"""
+        return self.all_sim_times[self.global_t_idx]
 
     def reset(self, t_index=None):
         if t_index is None:
-            self.current_t_idx = np.random.randint(0, self.max_t_idx - 10)
+            # 随机选择时留出 buffer，防止越界
+            self.global_t_idx = np.random.randint(0, max(1, self.max_t_idx - 1))
         else:
-            self.current_t_idx = min(t_index, self.max_t_idx)
-        return self.current_t_idx
-
-    def get_wind(self, x, y, z): #x,y,z为无量纲坐标，范围0-1
-        # 1. 映射坐标
-        fx = x * self.space_range[0]
-        fy = y * self.space_range[1]
-        fz = z * self.space_range[2]
-
-        # 2. 钳制最大索引，确保能够取到右侧相邻点。定义一个极小值，防止浮点数刚好在边界上
-        epsilon = 1e-5 
+            self.global_t_idx = min(t_index, self.max_t_idx)
         
-        fx = np.clip(fx, 0, self.space_range[0] - 1 - epsilon)
-        fy = np.clip(fy, 0, self.space_range[1] - 1 - epsilon)
-        fz = np.clip(fz, 0, self.space_range[2] - 1 - epsilon)
+        # 确定当前全局索引落在哪个文件里
+        for i in range(len(self.t_offsets) - 1):
+            if self.t_offsets[i] <= self.global_t_idx < self.t_offsets[i+1]:
+                self.current_file_idx = i
+                self.local_t_idx = self.global_t_idx - self.t_offsets[i]
+                break
+        return self.global_t_idx
+
+    def get_wind(self, x, y, z):
+        # 1. 映射坐标
+        fx = np.clip(x * self.space_range[0], 0, self.space_range[0] - 1.00001)
+        fy = np.clip(y * self.space_range[1], 0, self.space_range[1] - 1.00001)
+        fz = np.clip(z * self.space_range[2], 0, self.space_range[2] - 1.00001)
+
         ix0, iy0, iz0 = int(fx), int(fy), int(fz)
         dx, dy, dz = fx - ix0, fy - iy0, fz - iz0
 
-        # 3. 准备切片 (Hardcoded for t,x,y,z layout), 轴序已知：t=0, x=1, y=2, z=3
+        # 2. 从当前活跃的文件中切片
         slices = (
-            slice(self.current_t_idx, self.current_t_idx + 1), # t
-            slice(ix0, ix0 + 2),                               # x
-            slice(iy0, iy0 + 2),                               # y
-            slice(iz0, iz0 + 2)                                # z
+            slice(self.local_t_idx, self.local_t_idx + 1),
+            slice(ix0, ix0 + 2),
+            slice(iy0, iy0 + 2),
+            slice(iz0, iz0 + 2)
         )
 
-        # 4. 读取数据并 Squeeze
-        # 原数据 (1, 2, 2, 2) -> Squeeze 后变成 (2, 2, 2)
-        # 因为存储顺序是 x, y, z，所以 dim0=x, dim1=y, dim2=z
-        u_block = self.dsets['ux'][slices].squeeze()
-        v_block = self.dsets['uy'][slices].squeeze()
-        w_block = self.dsets['uz'][slices].squeeze()
+        dsets = self.dsets_list[self.current_file_idx]
+        u_block = dsets['ux'][slices].squeeze()
+        v_block = dsets['uy'][slices].squeeze()
+        w_block = dsets['uz'][slices].squeeze()
 
-        # 5. 三线性插值 (直接按 x, y, z 顺序计算)
+        # 3. 三线性插值 (保持原逻辑)
         def trilinear_simplified(cube, dx, dy, dz):
-            # 沿 X 轴插值 (消去第0维，剩 y, z)
-            # cube[0,:,:] 是 x0 面, cube[1,:,:] 是 x1 面
-            c_yz_0 = cube[0] * (1 - dx) + cube[1] * dx
-            
-            # 沿 Y 轴插值 (消去第0维，剩 z)
-            # c_yz_0[0,:] 是 y0 线, c_yz_0[1,:] 是 y1 线
-            c_z = c_yz_0[0] * (1 - dy) + c_yz_0[1] * dy
-            
-            # 沿 Z 轴插值 (得到标量)
-            val = c_z[0] * (1 - dz) + c_z[1] * dz
-            return val
+            c0 = cube[0] * (1 - dx) + cube[1] * dx
+            c1 = c0[0] * (1 - dy) + c0[1] * dy
+            return c1[0] * (1 - dz) + c1[1] * dz
 
-        wx = trilinear_simplified(u_block, dx, dy, dz)
-        wy = trilinear_simplified(v_block, dx, dy, dz)
-        wz = trilinear_simplified(w_block, dx, dy, dz)
-
-        return np.array([wx, wy, wz])
+        return np.array([
+            trilinear_simplified(u_block, dx, dy, dz),
+            trilinear_simplified(v_block, dx, dy, dz),
+            trilinear_simplified(w_block, dx, dy, dz)
+        ])
     
     def close(self):
-        if self.file:
-            self.file.close()
-            self.file = None
+        for f in self.files:
+            f.close()
+        self.files = []
 
 
 # ==========================================

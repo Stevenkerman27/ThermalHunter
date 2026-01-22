@@ -117,10 +117,9 @@ def simulate_constant_control():
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
     # 2. 设置颜色映射 (Colormap)
-    # 使用 'jet' (蓝-青-黄-红) 或 'viridis'
     # 这里的 norm 决定了颜色的范围。你可以自动设为 min/max，也可以手动指定范围方便观察
     norm = Normalize(vmin=np.min(velocities), vmax=np.max(velocities))
-    cmap = plt.get_cmap('jet')
+    cmap = plt.get_cmap('viridis')
 
     # 3. 创建 Line3DCollection 对象
     lc = Line3DCollection(segments, cmap=cmap, norm=norm)
@@ -133,6 +132,8 @@ def simulate_constant_control():
     # 5. 添加颜色条 (Colorbar) 以便读数
     cbar = fig.colorbar(lc, ax=ax, fraction=0.03, pad=0.04)
     cbar.set_label('True Airspeed (m/s)')
+    cbar.set_label('True Airspeed (m/s)', fontsize=14) # 颜色条标题
+    cbar.ax.tick_params(labelsize=12)                 # 颜色条刻度
 
     # --- 辅助元素 ---
     
@@ -145,10 +146,10 @@ def simulate_constant_control():
     ax.set_ylim(history[:,1].min(), history[:,1].max())
     ax.set_zlim(0, 1000)
     
-    ax.set_xlabel('X (m)')
-    ax.set_ylabel('Y (m)')
-    ax.set_zlabel('Z (m)')
-    ax.set_title(f'Glider Path (Color by Airspeed)\nAoA={aoa_deg}, Bank={bank_deg}')
+    ax.set_xlabel('X (m)', fontsize=16)
+    ax.set_ylabel('Y (m)', fontsize=16)
+    ax.set_zlabel('Z (m)', fontsize=16)
+    ax.set_title(f'Glider Path (Color by Airspeed)\nAoA={aoa_deg}, Bank={bank_deg}',fontsize=18)
     
     plt.show()
 

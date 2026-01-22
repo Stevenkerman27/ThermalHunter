@@ -2,18 +2,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # --- 1. 参数设置 ---
-scale = 0.4        # 噪声强度
-BASE_PROBS = [0.4, 0.6] # 基准概率
+scale = 0        # noise scale
+BASE_PROBS = [0.45, 0.55] # 基准概率
 N_ARMS = len(BASE_PROBS)
 
-EPISODES = 100
+EPISODES = 2000
 ALPHA_START = 0.1
 ALPHA_END = 0.01
 
 EPSILON_START = 1
-EPSILON_MIN = 0.2
+EPSILON_MIN = 0.5
 
-N_RUNS = 100  # <--- 新增：设定重复实验次数
+N_RUNS = 10  # <--- 新增：设定重复实验次数
 
 # --- 2. 初始化存储容器 ---
 # 我们需要存储所有实验的所有步数数据
@@ -21,7 +21,7 @@ N_RUNS = 100  # <--- 新增：设定重复实验次数
 all_q_histories = np.zeros((N_RUNS, EPISODES + 1, N_ARMS))
 
 # --- 3. 循环 N 次实验 ---
-print(f"开始运行 {N_RUNS} 次独立实验...")
+print(f"Running {N_RUNS} runs...")
 
 for run in range(N_RUNS):
     # 每次实验都要重置 Q-table
