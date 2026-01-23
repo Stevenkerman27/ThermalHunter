@@ -33,7 +33,7 @@ def test_wind_reading():
     print(f"  - 时间步总数 (Max T): {wind_field.max_t_idx}")
 
     # 5. 测试 Reset
-    t_idx = wind_field.reset(40)
+    t_idx = wind_field.reset(240)
     print(f"  - Reset 后当前时间索引: {t_idx}")
 
     # 6. 测试 get_wind (核心逻辑)
@@ -44,11 +44,12 @@ def test_wind_reading():
         ("原点 (0,0,0)", 0.0, 0.0, 0.0),
         ("域中心", 0.5, 0.5, 0.5),
         ("边界内一点", 0.97, 0.97, 0.97),
-        ("边界内一点", 1, 1, 1)
+        ("边界内一点", 1, 1, 1),
+        ("边界内一点", 1, 0, 1)
     ]
 
     for name, x, y, z in test_points:
-        wind_vec = wind_field.get_wind(x, y, z)
+        wind_vec = wind_field.get_wind(x, y, z) * 100
         print(f"  测试点 [{name}]:")
         print(f"    输入坐标: ({x:.3f}, {y:.3f}, {z:.3f})")
         print(f"    输出风速: ux={wind_vec[0]:.4f}, uy={wind_vec[1]:.4f}, uz={wind_vec[2]:.4f}")

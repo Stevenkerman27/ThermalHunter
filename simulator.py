@@ -1,157 +1,144 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 import os
-from matplotlib.collections import LineCollection
-from mpl_toolkits.mplot3d.art3d import Line3DCollection
+import glob
 from matplotlib.colors import Normalize
-import matplotlib.cm as cm
-
-# 引用你的模块
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from glider_discrete import RBWindField, GliderPhysics
 
 def simulate_constant_control():
     # ================= 配置参数 =================
-    # 1. 文件路径
-    H5_PATH = os.path.join(os.path.dirname(__file__), 'wind/snapshots_s1.h5') # 请修改为你的实际路径
-    POLAR_BASE = 'glider' # 假设你的气动数据前缀是 glider (即存在 glider_DegenGeom.polar)
+    wind_dir = os.path.join(os.path.dirname(__file__), 'wind')
+    h5_files = sorted(glob.glob(os.path.join(wind_dir, 'snapshots_s*.h5')))
     
-    # 2. 物理环境定义
-    # 假设我们模拟 1km 的立方体
-    DOMAIN_SIZE_M = np.array([1000.0, 1000.0, 1000.0]) 
-    
-    # 3. 风速缩放 (关键步骤)
-    # 假设 Dedalus 输出的无量纲 w 最大值约为 80，我们希望物理最大 w 为 5 m/s
-    # Scale = 5.0 / 80.0 = 0.0625
-    WIND_SCALE = 1000 
-
-    # 4. 初始状态
-    # [x, y, z, V_tas, gamma, chi]
-    # 从 (500, 500, 900) 开始，速度 15m/s，水平飞行，朝向北方 (chi=pi/2)
-    init_state = np.array([500.0, 500.0, 900.0, 15.0, 0.0, np.pi/2])
-
-    # 5. 控制输入 (固定)
-    aoa_deg = 3
-    bank_deg = 5
-    
-    control = np.array([np.deg2rad(aoa_deg), np.deg2rad(bank_deg)])
-
-    # ================= 初始化 =================
-    print(f"正在初始化风场: {H5_PATH}...")
-    try:
-        # 注意：这里 domain_size 传给 WindField 主要是为了内部记录，
-        # 但 get_wind 依然需要 0-1 的输入，我们在循环里手动转换更稳妥。
-        wind_field = RBWindField(H5_PATH, domain_size=DOMAIN_SIZE_M)
-
-        t_idx = wind_field.reset(40)
-        print(f"当前风场时间索引: {t_idx}")
-    except Exception as e:
-        print(f"[Error] 风场加载失败: {e}")
+    if not h5_files:
+        print("错误：未找到风场文件。")
         return
+
+    POLAR_BASE = 'glider' 
+    DOMAIN_SIZE_M = np.array([800.0, 800.0, 800.0]) 
+    WIND_AMPF = 20.0  
+    B = 2.0           
+
+    init_state = np.array([600.0, 200.0, 600.0, 12.0, 0.0, np.pi/2], dtype=np.float32)
+
+    aoa_deg = 2
+    bank_deg = 2
+    control = np.array([np.deg2rad(aoa_deg), np.deg2rad(bank_deg)], dtype=np.float32)
+
+    wind_field = RBWindField(h5_files, domain_size=DOMAIN_SIZE_M)
+    wind_field.reset(0)
+    dt = wind_field.dt_phy
 
     try:
         physics = GliderPhysics(POLAR_BASE, mass=2)
-        print("气动数据加载成功。")
     except Exception as e:
-        print(f"[Error] 气动数据加载失败 (请确保有 .polar 文件): {e}")
+        print(f"[Error] 气动数据加载失败: {e}")
         wind_field.close()
         return
 
     # ================= 主循环 =================
-    dt = 0.1  # 模拟步长 (秒)
-    max_time = 300 # 最多模拟 300 秒
+    max_time = 300 
     steps = int(max_time / dt)
     
     history = []
     velocities = []
-    current_state = init_state.copy()
+    w_accels = []
+    delta_ws = []
     
-    print(f"开始模拟... (AoA={aoa_deg}°, Bank={bank_deg}°)")
+    current_state = init_state.copy()
+    prev_w_z = wind_field.get_wind(*current_state[:3])[2] * WIND_AMPF
+
+    print(f"开始模拟... 使用 dt={dt:.4f}s")
 
     for i in range(steps):
-        # 1. 记录轨迹
         pos = current_state[:3]
         v_tas = current_state[3]
-        history.append(pos)
+        chi = current_state[5]
+        
+        history.append(pos.copy())
         velocities.append(v_tas)
 
-        # 2. 坐标归一化 (Meters -> 0..1)
-        # 必须加上防止除0的保护，虽然这里 domain固定是1000
-        norm_pos = pos / DOMAIN_SIZE_M
+        # 1. 计算 delta_w
+        side_vec = np.array([np.sin(chi), -np.cos(chi), 0])
+        pos_right = pos + (B / 2.0) * side_vec
+        pos_left  = pos - (B / 2.0) * side_vec
         
-        # 3. 边界检查 (简单版)
-        if np.any(norm_pos < 0) or np.any(norm_pos > 1):
-            print(f"Step {i}: 滑翔机飞出边界，停止模拟。Pos: {pos}")
+        w_right_z = wind_field.get_wind(*pos_right)[2] * WIND_AMPF
+        w_left_z  = wind_field.get_wind(*pos_left)[2] * WIND_AMPF
+        delta_ws.append(w_right_z - w_left_z)
+
+        # 2. 计算 w_accel
+        curr_w_z = wind_field.get_wind(*pos)[2] * WIND_AMPF
+        w_accel = (curr_w_z - prev_w_z) / dt
+        w_accels.append(w_accel)
+        prev_w_z = curr_w_z
+
+        if (pos[2] <= 0 or np.any(pos < 0) or np.any(pos > DOMAIN_SIZE_M)):
             break
         
-        # 4. 读取风速 (无量纲)
-        # 注意：这里调用的是修改过(含clip)的 get_wind
-        raw_wind = wind_field.get_wind(*norm_pos) 
-        
-        # 5. 风速物理化 (Scaling)
-        real_wind = raw_wind * WIND_SCALE
-        
-        # 6. 物理积分
-        # current_state 更新
-        current_state = physics.integration_step(current_state, control, real_wind, dt)
+        current_state = physics.integration_step(
+                    current_state, control, wind_field, WIND_AMPF, dt
+                )
 
-        # 7. 接地检查
-        if current_state[2] <= 0:
-            print(f"Step {i}: 滑翔机落地。")
+        if not wind_field.step_time():
             break
-    history = np.array(history)       # 将列表转为 numpy 数组
-    velocities = np.array(velocities) # 将列表转为 numpy 数组
 
-    # ================= 可视化 (带速度颜色映射) =================
-    if len(history) == 0:
-        print("没有轨迹数据。")
+    # ================= 数据统计与转换 =================
+    history = np.array(history)
+    velocities = np.array(velocities)
+    w_accels = np.array(w_accels)
+    delta_ws = np.array(delta_ws)
+    times = np.arange(len(history)) * dt
+
+    if len(history) < 2:
+        wind_field.close()
         return
 
-    fig = plt.figure(figsize=(12, 10))
-    ax = fig.add_subplot(111, projection='3d')
+    print("\n--- 轨迹风场特性统计 ---")
+    print(f"w_accel 均值: {w_accels.mean():.4f} m/s², 范围: [{w_accels.min():.4f}, {w_accels.max():.4f}]")
+    print(f"delta_w 均值: {delta_ws.mean():.4f} m/s, 范围: [{delta_ws.min():.4f}, {delta_ws.max():.4f}]")
 
-    # --- 核心修改：创建彩色线条 ---
+    # ================= 可视化 =================
     
-    # 1. 准备数据点对：(x, y, z) -> (next_x, next_y, next_z)
+    # 图 1: 3D 轨迹
+    fig1 = plt.figure(figsize=(10, 7))
+    ax3d = fig1.add_subplot(111, projection='3d')
     points = history.reshape(-1, 1, 3)
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    norm = Normalize(vmin=velocities.min(), vmax=velocities.max())
+    lc = Line3DCollection(segments, cmap='viridis', norm=norm)
+    lc.set_array(velocities[:-1])
+    lc.set_linewidth(2)
+    ax3d.add_collection3d(lc)
+    fig1.colorbar(lc, ax=ax3d, label='True Airspeed (m/s)', pad=0.1)
+    ax3d.set_xlim(0, DOMAIN_SIZE_M[0]); ax3d.set_ylim(0, DOMAIN_SIZE_M[1]); ax3d.set_zlim(0, DOMAIN_SIZE_M[2])
+    ax3d.set_xlabel('X (m)'); ax3d.set_ylabel('Y (m)'); ax3d.set_zlabel('Height (m)')
+    ax3d.set_title('Glider Trajectory')
 
-    # 2. 设置颜色映射 (Colormap)
-    # 这里的 norm 决定了颜色的范围。你可以自动设为 min/max，也可以手动指定范围方便观察
-    norm = Normalize(vmin=np.min(velocities), vmax=np.max(velocities))
-    cmap = plt.get_cmap('viridis')
-
-    # 3. 创建 Line3DCollection 对象
-    lc = Line3DCollection(segments, cmap=cmap, norm=norm)
-    lc.set_array(velocities[:-1]) # 设置颜色依据的数据
-    lc.set_linewidth(2)           # 线宽
-
-    # 4. 添加到绘图区
-    ax.add_collection3d(lc)
+    # 图 2: 风场统计数据曲线
+    fig2, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
     
-    # 5. 添加颜色条 (Colorbar) 以便读数
-    cbar = fig.colorbar(lc, ax=ax, fraction=0.03, pad=0.04)
-    cbar.set_label('True Airspeed (m/s)')
-    cbar.set_label('True Airspeed (m/s)', fontsize=14) # 颜色条标题
-    cbar.ax.tick_params(labelsize=12)                 # 颜色条刻度
+    # 绘制 w_accel
+    ax1.plot(times, w_accels, color='steelblue', lw=1.5, label='$w_{accel}$')
+    ax1.axhline(w_accels.mean(), color='red', linestyle='--', alpha=0.7, label='Mean')
+    ax1.set_ylabel('Vertical Accel ($m/s^2$)')
+    ax1.set_title('Dynamic Wind Characteristics Analysis')
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(loc='upper right')
 
-    # --- 辅助元素 ---
-    
-    # 绘制起点和终点
-    ax.scatter(history[0, 0], history[0, 1], history[0, 2], c='black', marker='o', s=50, label='Start')
-    ax.scatter(history[-1, 0], history[-1, 1], history[-1, 2], c='black', marker='x', s=50, label='End')
+    # 绘制 delta_w
+    ax2.plot(times, delta_ws, color='indianred', lw=1.5, label='$\delta_w$')
+    ax2.axhline(delta_ws.mean(), color='blue', linestyle='--', alpha=0.7, label='Mean')
+    ax2.set_xlabel('Time (s)')
+    ax2.set_ylabel('Wingtip Wind Diff ($m/s$)')
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(loc='upper right')
 
-    # 关键：Line3DCollection 不会自动更新坐标轴范围，必须手动设置！
-    ax.set_xlim(history[:,0].min(), history[:,0].max())
-    ax.set_ylim(history[:,1].min(), history[:,1].max())
-    ax.set_zlim(0, 1000)
-    
-    ax.set_xlabel('X (m)', fontsize=16)
-    ax.set_ylabel('Y (m)', fontsize=16)
-    ax.set_zlabel('Z (m)', fontsize=16)
-    ax.set_title(f'Glider Path (Color by Airspeed)\nAoA={aoa_deg}, Bank={bank_deg}',fontsize=18)
-    
+    plt.tight_layout()
     plt.show()
+    
+    wind_field.close()
 
 if __name__ == "__main__":
     simulate_constant_control()

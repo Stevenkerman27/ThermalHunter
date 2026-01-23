@@ -2,18 +2,21 @@ import numpy as np
 import os
 import glob
 from glider_discrete import RBWindField
+import re
 
 def diagnose_wind_file():
-    # 1. 查找所有 snapshot 文件并排序
     wind_dir = os.path.join(os.path.dirname(__file__), 'wind')
-    h5_files = sorted(glob.glob(os.path.join(wind_dir, 'snapshots_s*.h5')))
+    raw_files = glob.glob(os.path.join(wind_dir, 'snapshots_s*.h5'))
+    
+    # 修复排序逻辑
+    h5_files = sorted(raw_files, key=lambda x: [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', x)])
     
     if not h5_files:
         print("未找到任何风场文件！")
         return
     
     # 2. 初始化 (RBWindField 内部会读取 sim_time 标尺)
-    domain_size = (100.0, 100.0, 100.0)
+    domain_size = (1000.0, 1000.00, 1000.0)
     try:
         wf = RBWindField(h5_files, domain_size=domain_size)
     except Exception as e:
