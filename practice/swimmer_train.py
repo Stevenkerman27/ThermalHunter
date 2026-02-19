@@ -20,7 +20,7 @@ NUM_EPISODES = 8000       # 训练总局数
 LEARNING_RATE = 0.01
 GAMMA = 0.1
 EPSILON_START = 1.0
-EPSILON_END = 0.1
+EPSILON_END = 0.6
 sessions = 1000
 
 # =================主程序=================

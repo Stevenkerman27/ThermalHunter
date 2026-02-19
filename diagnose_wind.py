@@ -5,7 +5,7 @@ from glider_discrete import RBWindField
 import re
 
 def diagnose_wind_file():
-    wind_dir = os.path.join(os.path.dirname(__file__), 'wind')
+    wind_dir = os.path.dirname(__file__)
     raw_files = glob.glob(os.path.join(wind_dir, 'snapshots_s*.h5'))
     
     # 修复排序逻辑

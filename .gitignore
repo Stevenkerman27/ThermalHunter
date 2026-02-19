@@ -1,1 +1,7 @@
 wind/
+trainresult/
+archive
+glider.polar
+diagnose_wind.py
+plotwind.py
+test_wind_reading.py

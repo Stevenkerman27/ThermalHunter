@@ -13,7 +13,7 @@ Y_SLICE_RATIO = 0.5
 # 动画跳帧设置 (每隔N帧渲染一帧，减小GIF体积)
 FRAME_SKIP = 1
 # 动画帧率 (FPS)
-FPS = 6
+FPS = 5
 # 输出文件名
 OUTPUT_GIF = "convective_plumes_xz.gif"
 
@@ -84,7 +84,7 @@ def render_gif():
     # 4. 绘图设置保持不变
     extent = [0, DOMAIN_SIZE_PHYSICAL[0], 0, DOMAIN_SIZE_PHYSICAL[2]]
     im = ax.imshow(placeholder_data, cmap='RdBu_r', vmin=0, vmax=1, 
-                origin='lower', extent=extent, aspect='auto')
+                origin='lower', extent=extent, aspect='equal')
     
     # 添加颜色条
     cbar = fig.colorbar(im, ax=ax)
@@ -95,7 +95,7 @@ def render_gif():
     ax.set_ylabel('Z Position (Height)')
     title_text = ax.set_title('')
 
-    start_frame = 0    
+    start_frame = 0   
     frames_to_render = range(start_frame, total_steps, FRAME_SKIP)
     print(f"预计渲染帧数: {len(frames_to_render)}")
 
@@ -122,7 +122,7 @@ def render_gif():
     
     # 使用 Pillow writer 保存 (无需额外安装 ImageMagick)
     try:
-        ani.save(OUTPUT_GIF, writer='pillow', fps=FPS, dpi=100)
+        ani.save(OUTPUT_GIF, writer='pillow', fps=FPS, dpi=200)
         print("渲染完成！")
     except Exception as e:
         print(f"保存 GIF 失败: {e}")
