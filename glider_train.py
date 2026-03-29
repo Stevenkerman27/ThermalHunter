@@ -43,7 +43,7 @@ env = gym.make(
 ALPHA = 0.01
 GAMMA = 0.98
 EPSILON_START = 1.0
-EPSILON_END = 0.2
+EPSILON_END = 0.1
 EPISODES = 8000
 Q_TABLE_DIR = "q_table"
 os.makedirs(Q_TABLE_DIR, exist_ok=True)
@@ -63,6 +63,7 @@ def select_action(state, epsilon):
     return np.argmax(q_table[tuple(state)])
 
 rewards_history = []
+climb_history = []
 
 track_indices = [(3, 1, 1, 1), (3, 2, 2, 0), (3, 0, 0, 2)] 
 q_value_history = {idx: [] for idx in track_indices}
@@ -72,7 +73,8 @@ total_steps = 0
 
 for episode in range(EPISODES):
     # 环境 reset 返回 (obs, info)
-    state, _ = env.reset(options={"resettime": 80})
+    state, info = env.reset(options={"resettime": 80})
+    h_start = info["height"]
     total_reward = 0
     done = False
     
@@ -98,9 +100,13 @@ for episode in range(EPISODES):
         
         state = next_state
         total_reward += reward
+    
+    h_end = info["height"]
+    climb_history.append(h_end - h_start)
+    
     for idx in track_indices:
         # 追踪特定状态下的所有动作 Q 值中的一个，或者修改为追踪特定动作
-        # 这里原代码逻辑是 q_table[idx]，idx 为 (s0, s1, a)
+        # 这里原代码逻辑是 q_table[idx]，idx 为 (s0, s1, s2, a)
         q_value_history[idx].append(q_table[idx])
 
     rewards_history.append(total_reward)
@@ -113,8 +119,9 @@ for episode in range(EPISODES):
         elapsed = time.perf_counter() - start_time
         sps = total_steps / elapsed # 计算每秒运行的步数
         avg_r = np.mean(rewards_history[-50:])
+        avg_c = np.mean(climb_history[-50:])
         
-        print(f"Ep: {episode+1:4} | Last 50 Avg R: {avg_r:8.2f} | Speed: {sps:6.1f} steps/s | Eps: {epsilon:.3f}")
+        print(f"Ep: {episode+1:4} | Last 50 Avg R: {avg_r:8.2f} | Avg Climb: {avg_c:6.1f}m | Speed: {sps:6.1f} steps/s | Eps: {epsilon:.3f}")
     
     # 每隔 SAVE_INTERVAL 个 episode 保存一次 qtable
     if (episode + 1) % SAVE_INTERVAL == 0:
@@ -133,8 +140,8 @@ env.close()
 
 ref_random, ref_best = 5, 200
 
-# 创建包含 2 个子图的画布，共享 X 轴（Episode）
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+# 创建包含 3 个子图的画布，共享 X 轴（Episode）
+fig, (ax1, ax_climb, ax2) = plt.subplots(3, 1, figsize=(10, 8), sharex=True,gridspec_kw={'height_ratios': [2, 2, 1]})
 
 # 子图 1: 奖励曲线
 ax1.plot(rewards_history, label='Total Reward', alpha=0.3, color='blue')
@@ -142,14 +149,24 @@ if len(rewards_history) >= 50:
     moving_avg = np.convolve(rewards_history, np.ones(50)/50, mode='valid')
     ax1.plot(range(49, len(rewards_history)), moving_avg, label='Moving Average (50)', color='red', linewidth=2)
 
-# 绘制参考横线
-ax1.axhline(y=ref_random, color='gray', linestyle='--', label=f'Ref: Random ({ref_random})')
-ax1.axhline(y=ref_best, color='green', linestyle='--', label=f'Ref: Best ({ref_best})')
-
 ax1.set_ylabel('Total Reward')
-ax1.set_title('Training Performance with Baselines')
-ax1.legend(loc='upper left', bbox_to_anchor=(1, 1)) # 移动图例防止遮挡
+ax1.set_title('Training Performance (Reward)')
+ax1.legend(loc='upper left', bbox_to_anchor=(1, 1))
 ax1.grid(True, linestyle='--', alpha=0.6)
+ax1.set_ylim(min(rewards_history), max(rewards_history))
+
+# 爬升高度曲线
+ax_climb.plot(climb_history, label='Climb Height', alpha=0.3, color='forestgreen')
+if len(climb_history) >= 50:
+    moving_avg_climb = np.convolve(climb_history, np.ones(50)/50, mode='valid')
+    ax_climb.plot(range(49, len(climb_history)), moving_avg_climb, label='Moving Average (50)', color='darkgreen', linewidth=2)
+
+ax_climb.set_ylabel('Climb Height (m)')
+ax_climb.set_title('Training Performance (Climb)')
+ax_climb.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+ax_climb.legend(loc='upper left', bbox_to_anchor=(1, 1))
+ax_climb.grid(True, linestyle='--', alpha=0.6)
+ax_climb.set_ylim(min(climb_history), max(climb_history))
 
 # --- 子图 2: 特定 Q 值变化 ---
 for idx, history in q_value_history.items():
@@ -163,4 +180,5 @@ ax2.legend(loc='upper left')
 ax2.grid(True, linestyle='--', alpha=0.6)
 
 plt.tight_layout()
+plt.savefig("trainresult/train_result.png", dpi=300)
 plt.show()

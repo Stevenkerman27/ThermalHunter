@@ -160,12 +160,7 @@ def _plot_all_results(history, tas, uz, reward_hst, w_accels, delta_ws, obs_bank
     ax3_tw = ax3.twinx()
     ax3_tw.step(times, np.rad2deg(aoa), where='post', color='green', label='AoA')
     
-    # 新增 Bank Index 绘图
-    ax3_tw2 = ax3.twinx()
-    ax3_tw2.spines["right"].set_position(("axes", 1.1))
-    ax3_tw2.step(times, obs_bank_idxs, where='post', color='blue', alpha=0.3, label='Bank Index')
-    
-    ax3.set_ylabel('Bank (red)'); ax3_tw.set_ylabel('AoA (green)'); ax3_tw2.set_ylabel('Bank Index (blue)')
+    ax3.set_ylabel('Bank (red)'); ax3_tw.set_ylabel('AoA (green)')
     ax3.set_title("Control Inputs")
     ax3.grid(True, alpha=0.3)
 

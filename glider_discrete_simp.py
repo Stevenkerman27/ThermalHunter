@@ -159,7 +159,7 @@ class GliderEnv(gym.Env):
     
     # Sensor thresholds (unchanged)
     BINS_W_ACCEL = np.array([-0.3, 0.3])
-    BINS_DELTA_W = np.array([-0.06, 0.06])
+    BINS_DELTA_W = np.array([-0.1, 0.1])
     
     # String labels for external visualization scripts
     ACTION_LABELS = {
@@ -184,7 +184,7 @@ class GliderEnv(gym.Env):
         self.dt_integration = dt_rl / n_phys_per_rl    # 每次物理积分的实际Delta T
         
         self.wind_ampf = wind_ampf
-        self.b = 2.0  # 翼展
+        self.b = 6.0 # 翼展
         self.reward_survive = 0
         self.rl_step_counter = 0                       # 用于追踪RL步数以更新风场
 
