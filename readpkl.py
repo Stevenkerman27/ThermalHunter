@@ -7,19 +7,15 @@ from glider_discrete_simp import GliderEnv
 # 1. 加载 Q-table
 # 注意：现在 Q-table 的形状应为 (BANK_BINS, 3, 3, 3) -> (Bank, Accel, Diff, Action)
 Q_TABLE_DIR = "q_table"
-#Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_ideal.pkl")
+#Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_high.pkl")
 Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_v0.pkl")
-try:
-    q_table = pickle.load(open(Q_TABLE_PATH, "rb"))
-    print(f"成功加载 Q-table: {Q_TABLE_PATH}, shape: {q_table.shape}")
-except Exception as e:
-    print(f"加载失败: {e}")
-    # 创建一个全零的 Q-table 仅用于测试绘图逻辑 (如果文件不存在)
-    q_table = np.zeros((GliderEnv.BANK_BINS, 3, 3, 3))
+
+q_table = pickle.load(open(Q_TABLE_PATH, "rb"))
+print(f"成功加载 Q-table: {Q_TABLE_PATH}, shape: {q_table.shape}")
 
 # 2. 绘图配置
 # 我们将为 7 个不同的 Bank Angle 分别绘制一个 3x3 的风场状态矩阵
-fig, axes = plt.subplots(GliderEnv.BANK_BINS, 1, figsize=(10, 2 * GliderEnv.BANK_BINS), sharex=True)
+fig, axes = plt.subplots(GliderEnv.BANK_BINS, 1, figsize=(8, GliderEnv.BANK_BINS), sharex=True)
 if GliderEnv.BANK_BINS == 1:
     axes = [axes]
 
@@ -29,7 +25,8 @@ action_mapping = GliderEnv.ACTION_LABELS # {0: bank-5, 1: bank+0, 2: bank+5}
 
 # 3. 循环绘图
 for b_idx in range(GliderEnv.BANK_BINS):
-    ax = axes[b_idx]
+    # 反转索引，使 15° 在最上面，-15° 在最下面
+    ax = axes[GliderEnv.BANK_BINS - 1 - b_idx]
     bank_deg = GliderEnv.BANK_MIN_DEG + b_idx * GliderEnv.BANK_STEP_DEG
     
     obs_labels = []
@@ -47,7 +44,7 @@ for b_idx in range(GliderEnv.BANK_BINS):
         marker = action_mapping.get(action, "?")
         # 0: 蓝色 (减小), 1: 绿色 (保持), 2: 红色 (增加)
         color = 'blue' if action == 0 else ('green' if action == 1 else 'red')
-        ax.scatter(i, 0, marker=marker, s=800, color=color)
+        ax.scatter(i, 0, marker=marker, s=600, color=color)
 
     # 子图装饰
     ax.set_yticks([])
