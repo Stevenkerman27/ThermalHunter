@@ -42,17 +42,22 @@ class RBWindField:
         self._open_resources()
 
     def _open_resources(self):
+        self.all_data = [] # 用于存储读取后的内存数组
+        
         for path in self.h5_paths:
-            f = h5py.File(path, 'r')
-            self.files.append(f)
-            dset_group = {k: f['tasks'][k] for k in ['ux', 'uy', 'uz','buoyancy']}
-            self.dsets_list.append(dset_group)
-            
-            file_times = dset_group['ux'].dims[0]['sim_time'][:]
-            self.all_sim_times.extend(file_times)
-            
-            file_t_steps = len(file_times)
-            self.t_offsets.append(self.t_offsets[-1] + file_t_steps)
+            with h5py.File(path, 'r') as f:
+                # 直接将整个数据集读取到内存中，存储为字典形式的 numpy array
+                dset_group = {
+                    'ux': f['tasks/ux'][:],
+                    'uy': f['tasks/uy'][:],
+                    'uz': f['tasks/uz'][:],
+                    'buoyancy': f['tasks/buoyancy'][:]
+                }
+                self.dsets_list.append(dset_group)
+                
+                file_times = f['tasks/ux'].dims[0]['sim_time'][:]
+                self.all_sim_times.extend(file_times)
+                self.t_offsets.append(self.t_offsets[-1] + len(file_times))
         
         self.all_sim_times = np.array(self.all_sim_times)
         self.max_t_idx = len(self.all_sim_times) - 1
@@ -104,7 +109,12 @@ class RBWindField:
         ])
 
     def close(self):
-        for f in self.files: f.close()
+            for f in self.files: 
+                f.close()
+            # 清空内存中存储的巨大风场数组
+            self.dsets_list.clear()
+            import gc
+            gc.collect()
 
 class GliderPhysics:
     def __init__(self, polar_file_base, mass=2, area=0.3):
@@ -141,7 +151,7 @@ class GliderPhysics:
 
 class GliderEnv(gym.Env):
     def __init__(self, h5_file_path, polar_file_base, control_mode=0, domain_size=(1000.0, 1000.0, 1000.0), 
-                 dt_rl=1.0, n_phys_per_rl=2, rl_steps_per_frame=2, wind_ampf=12, hysteresis_pct=0.1, random_init = False):
+                 dt_rl=1.0, n_phys_per_rl=2, rl_steps_per_frame=2, wind_ampf=12, hysteresis_pct=0.1, random_init = True):
         super().__init__()
         self.mode = control_mode
         self.wind_manager = RBWindField(h5_file_path, domain_size=domain_size)
@@ -266,7 +276,7 @@ class GliderEnv(gym.Env):
         
         # 奖励计算
         current_uz = self.wind_manager.get_wind(*self.phy_state[:3])[2] * self.wind_ampf
-        reward = current_uz + 5 * self.w_accel + self.reward_survive
+        reward = current_uz + 5* self.w_accel + self.reward_survive
 
         if terminated or truncated:
             reward += (self.phy_state[2]-self.initial_z)*0.2
@@ -288,10 +298,12 @@ class GliderEnv(gym.Env):
         if self.random_init:
             x, y = self.np_random.uniform(0.2, 0.8, size=2) * self.domain_size[:2]
             z = self.np_random.uniform(0.2, 0.6) * self.domain_size[2]
+            init_dir = self.np_random.uniform(0, 2*np.pi)
         else:
             x,y,z = 0.5 * self.domain_size
+            init_dir = 0
         self.initial_z = z
-        self.phy_state = np.array([x, y, z, self.np_random.uniform(0, 2*np.pi)])
+        self.phy_state = np.array([x, y, z, init_dir])
         self.control_state = np.array([np.deg2rad(5.0), 0.0])
         self.w_accel, self.delta_w = 0.0, 0.0
         self.last_idx_az = None
@@ -326,3 +338,7 @@ class GliderEnv(gym.Env):
         self.last_idx_dw = self._apply_hysteresis(self.delta_w, self.bins_delta_w, self.last_idx_dw)
         
         return np.array([self.last_idx_az, self.last_idx_dw], dtype=np.int32)
+    
+    def close(self):
+            if hasattr(self, 'wind_manager'):
+                self.wind_manager.close()

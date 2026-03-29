@@ -6,14 +6,14 @@ import glob
 import os
 import re
 import pickle
+import time
 
 # --- 环境注册 ---
-# 确保 entry_point 与你的文件名 glider_discrete_simp.py 一致
 try:
     register(
         id="GliderDiscrete-v0",
         entry_point="glider_discrete_simp:GliderEnv", 
-        max_episode_steps=2000,
+        max_episode_steps=1000,
     )
 except:
     pass # 防止重复注册报错
@@ -44,8 +44,9 @@ ALPHA = 0.01
 GAMMA = 0.98
 EPSILON_START = 1.0
 EPSILON_END = 0.2
-EPISODES = 10000
+EPISODES = 8000
 SAVE_PATH = "q_table_v0.pkl"
+SAVE_INTERVAL = 2000  # 每隔 N 个 episode 保存一次 qtable
 
 # 初始化 Q 表: 状态空间 [3, 3], 动作空间 [9]
 q_table = np.full((3, 3, 9), 0, dtype=np.float32)
@@ -64,6 +65,8 @@ rewards_history = []
 track_indices = [(0, 0, 8), (0, 1, 7), (2,2,0), (2, 0, 2)] 
 q_value_history = {idx: [] for idx in track_indices}
 print(f"开始训练... 状态空间: {env.observation_space}, 动作空间: {env.action_space}, 追踪 Q 表索引: {track_indices}")
+start_time = time.perf_counter()
+total_steps = 0
 
 for episode in range(EPISODES):
     # 环境 reset 返回 (obs, info)
@@ -74,9 +77,10 @@ for episode in range(EPISODES):
     while not done:
         action = select_action(state, epsilon)
         
-        # 执行步进，返回 5 个值
+        # 执行步进
         next_state, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
+        total_steps += 1
         
         # 转换为 tuple 以索引 numpy 数组
         s_idx = tuple(state)
@@ -102,8 +106,18 @@ for episode in range(EPISODES):
         epsilon -= epsilon_decay_step
     
     if (episode + 1) % 50 == 0:
+        elapsed = time.perf_counter() - start_time
+        sps = total_steps / elapsed # 计算每秒运行的步数
         avg_r = np.mean(rewards_history[-50:])
-        print(f"Ep: {episode+1:4} | Last 50 Avg Reward: {avg_r:8.2f} | Eps: {epsilon:.3f}")
+        
+        print(f"Ep: {episode+1:4} | Last 50 Avg R: {avg_r:8.2f} | Speed: {sps:6.1f} steps/s | Eps: {epsilon:.3f}")
+    
+    # 每隔 SAVE_INTERVAL 个 episode 保存一次 qtable
+    if (episode + 1) % SAVE_INTERVAL == 0:
+        save_path = f"q_table_E_{episode+1}.pkl"
+        with open(save_path, "wb") as f:
+            pickle.dump(q_table, f)
+        print(f"已保存 Q-table 到 {save_path}")
 
 # --- 保存与绘图 ---
 with open(SAVE_PATH, "wb") as f:
@@ -112,19 +126,25 @@ with open(SAVE_PATH, "wb") as f:
 print(f"训练完成，模型保存至 {SAVE_PATH}")
 env.close()
 
-# 创建包含 2 个子图的画布，共享 X 轴（Episode）
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
 
-# --- 子图 1: 奖励曲线 ---
+ref_random, ref_best = 5, 200
+
+# 创建包含 2 个子图的画布，共享 X 轴（Episode）
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+
+# 子图 1: 奖励曲线
 ax1.plot(rewards_history, label='Total Reward', alpha=0.3, color='blue')
-# 绘制滑动平均线
 if len(rewards_history) >= 50:
     moving_avg = np.convolve(rewards_history, np.ones(50)/50, mode='valid')
-    ax1.plot(range(49, len(rewards_history)), moving_avg, label='Moving Average (50)', color='red')
+    ax1.plot(range(49, len(rewards_history)), moving_avg, label='Moving Average (50)', color='red', linewidth=2)
+
+# 绘制参考横线
+ax1.axhline(y=ref_random, color='gray', linestyle='--', label=f'Ref: Random ({ref_random})')
+ax1.axhline(y=ref_best, color='green', linestyle='--', label=f'Ref: Best ({ref_best})')
+
 ax1.set_ylabel('Total Reward')
-ax1.set_title('Training Performance & Q-Value Convergence')
-ax1.set_ylim(min(rewards_history), max(rewards_history))
-ax1.legend(loc='upper left')
+ax1.set_title('Training Performance with Baselines')
+ax1.legend(loc='upper left', bbox_to_anchor=(1, 1)) # 移动图例防止遮挡
 ax1.grid(True, linestyle='--', alpha=0.6)
 
 # --- 子图 2: 特定 Q 值变化 ---
@@ -138,6 +158,5 @@ ax2.set_ylabel('$Q$ Value')
 ax2.legend(loc='upper left')
 ax2.grid(True, linestyle='--', alpha=0.6)
 
-# 自动调整布局防止标签重叠
 plt.tight_layout()
 plt.show()

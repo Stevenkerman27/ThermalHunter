@@ -18,6 +18,7 @@ def simulate_with_env():
     h5_files = sorted(glob.glob(os.path.join(wind_dir, 'snapshots_s*.h5')), key=natural_key)
     
     Q_TABLE_PATH = "q_table_v0.pkl"
+    #Q_TABLE_PATH = "q_table_ideal.pkl"
 
     if not h5_files:
         print("错误：未找到风场文件。")
@@ -121,10 +122,10 @@ def _plot_all_results(history, tas, uz, reward_hst, w_accels, delta_ws, obs_w_ac
     
     lc = Line3DCollection(segments[valid_mask], cmap='viridis', 
                           norm=Normalize(vmin=uz.min(), vmax=uz.max()))
-    lc.set_array(uz_for_segments[valid_mask]) # 现在的长度完全匹配了
+    lc.set_array(uz_for_segments[valid_mask])
     
     ax3d.add_collection3d(lc)
-    fig1.colorbar(lc, ax=ax3d, label='Vertical Wind Speed Airspeed (m/s)', pad=0.1)
+    fig1.colorbar(lc, ax=ax3d, label='Vertical Wind Speed(m/s)', pad=0.1)
     
     ax3d.set_xlim(0, domain_size[0]); ax3d.set_ylim(0, domain_size[1]); ax3d.set_zlim(0, domain_size[2])
     ax3d.set_title('Glider Trajectory (Colored by TAS)')

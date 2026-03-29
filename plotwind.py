@@ -3,8 +3,8 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import os
 import glob
-from glider_discrete import RBWindField
-
+from glider_discrete_simp import RBWindField
+#plots gif of the wind
 # =================配置区域=================
 # 物理域大小 (用于坐标轴标签)
 DOMAIN_SIZE_PHYSICAL = (100.0, 100.0, 100.0) # (X, Y, Z)
