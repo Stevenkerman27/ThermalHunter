@@ -12,8 +12,8 @@ import pandas as pd
 N_EPISODES = 500  
 POLAR_BASE = "glider"
 Q_TABLE_DIR = "q_table"
-#Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_v0.pkl")
-Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_high.pkl")
+Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_v0.pkl")
+#Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_high.pkl")
 
 with open(Q_TABLE_PATH, "rb") as f:
     q_table = pickle.load(f)

@@ -5,5 +5,10 @@ plot_wing.py绘制风场切片的gif图
 readpkl.py读取训练的策略并绘图
 make_pkl.py制作理想策略
 test_wind_reading.py为测试风场数据的代码
-glider_discrete_simp.py为环境定义主文件
+glider_discrete_simp.py为环境定义主文件 (已通过物理预计算表优化，训练速度约 5000 steps/s)
 glider_train.py为训练代码
+
+# 开发基线
+1. 物理计算优化：由于 AoA 固定且 Bank 离散，使用 `physics_table` 预计算平衡状态，避免在 `step` 中调用 `scipy.interpolate`。
+2. 状态空间：BANK_BINS=7, W_ACCEL=3, DELTA_W=3。
+3. 训练速度：不使用多线程时，通过减少 Python 解释器开销可达到 ~5000 steps/s。

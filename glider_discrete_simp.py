@@ -198,10 +198,29 @@ class GliderEnv(gym.Env):
         self.last_idx_az = None
         self.last_idx_dw = None
 
+        # --- 方案 1: 物理预计算 ---
+        self._precompute_physics()
+
+    def _precompute_physics(self):
+        """预先计算所有离散 bank 角度下的平衡物理状态"""
+        self.physics_table = np.zeros((self.BANK_BINS, 3), dtype=np.float32)
+        aoa_rad = np.deg2rad(self.AOA_FIXED_DEG)
+        
+        for b_idx in range(self.BANK_BINS):
+            bank_rad = np.deg2rad(self.BANK_MIN_DEG + b_idx * self.BANK_STEP_DEG)
+            v_tas, gamma, dchi_dt = self.physics.get_steady_state(aoa_rad, bank_rad)
+            self.physics_table[b_idx] = [v_tas, gamma, dchi_dt]
+        
+        print(f"Physics table pre-computed for {self.BANK_BINS} bank angles.")
+
     def step(self, action):
         # 0: bank -5 deg, 1: bank +0 deg, 2: bank +5 deg
         self.bank_idx = np.clip(self.bank_idx + (action - 1), 0, self.BANK_BINS - 1)
         
+        # 从预计算表中获取参数，避免每步进行插值和三角函数运算
+        v_tas, gamma, dchi_dt = self.physics_table[self.bank_idx]
+        
+        # 仅用于 info 字典的记录
         aoa_rad = np.deg2rad(self.AOA_FIXED_DEG)
         bank_rad = np.deg2rad(self.BANK_MIN_DEG + self.bank_idx * self.BANK_STEP_DEG)
 
@@ -217,9 +236,8 @@ class GliderEnv(gym.Env):
             
             # 获取当前位置风速 (使用当前锁定的风场帧)
             w_vec_start = self.wind_manager.get_wind(x, y, z) * self.wind_ampf
-            v_tas, gamma, dchi_dt = self.physics.get_steady_state(aoa_rad, bank_rad)
             
-            # 位移计算使用自定义的 dt_integration
+            # 位移计算使用预计算出的 v_tas, gamma, dchi_dt
             dx = (v_tas * np.cos(gamma) * np.cos(chi) + w_vec_start[0]) * self.dt_integration
             dy = (v_tas * np.cos(gamma) * np.sin(chi) + w_vec_start[1]) * self.dt_integration
             dz = (-v_tas * np.sin(gamma) + w_vec_start[2]) * self.dt_integration
