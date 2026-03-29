@@ -11,8 +11,9 @@ import pandas as pd
 # --- 配置区 ---
 N_EPISODES = 500  
 POLAR_BASE = "glider"
-Q_TABLE_PATH = "q_table_ideal.pkl"
-#Q_TABLE_PATH = "q_table_E_8000.pkl"
+Q_TABLE_DIR = "q_table"
+Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_v0.pkl")
+#Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_E_8000.pkl")
 
 with open(Q_TABLE_PATH, "rb") as f:
     q_table = pickle.load(f)
@@ -104,7 +105,7 @@ if __name__ == "__main__":
     plt.axhline(0, color='black', linewidth=0.8, linestyle='--')
 
     plt.tight_layout()
-    plt.savefig("climb_eval_result.png", dpi=300)
+    plt.savefig("trainresult/climb_eval_result.png", dpi=300)
     plt.show()
 
     env.close()

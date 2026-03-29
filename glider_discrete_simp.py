@@ -150,10 +150,28 @@ class GliderPhysics:
         return v_tas, gamma_rad, dchi_dt
 
 class GliderEnv(gym.Env):
-    def __init__(self, h5_file_path, polar_file_base, control_mode=0, domain_size=(1000.0, 1000.0, 1000.0), 
+    # --- Centralized RL Configuration ---
+    BANK_MIN_DEG = -15.0
+    BANK_MAX_DEG = 15.0
+    BANK_STEP_DEG = 5.0
+    BANK_BINS = int((BANK_MAX_DEG - BANK_MIN_DEG) / BANK_STEP_DEG) + 1  # 7 bins
+    AOA_FIXED_DEG = 9.0
+    
+    # Sensor thresholds (unchanged)
+    BINS_W_ACCEL = np.array([-0.3, 0.3])
+    BINS_DELTA_W = np.array([-0.06, 0.06])
+    
+    # String labels for external visualization scripts
+    ACTION_LABELS = {
+        0: r"$\triangledown$", # Decrease bank (-5)
+        1: r"$\bullet$",          # Keep bank (0)
+        2: r"$\triangle$"       # Increase bank (+5)
+    }
+    OBS_WIND_SYMBOLS = ["-", "0", "+"]
+
+    def __init__(self, h5_file_path, polar_file_base, domain_size=(1000.0, 1000.0, 1000.0), 
                  dt_rl=1.0, n_phys_per_rl=2, rl_steps_per_frame=2, wind_ampf=12, hysteresis_pct=0.1, random_init = True):
         super().__init__()
-        self.mode = control_mode
         self.wind_manager = RBWindField(h5_file_path, domain_size=domain_size)
         self.physics = GliderPhysics(polar_file_base)
         self.domain_size = np.array(domain_size)
@@ -170,38 +188,10 @@ class GliderEnv(gym.Env):
         self.reward_survive = 0
         self.rl_step_counter = 0                       # 用于追踪RL步数以更新风场
 
-        # 状态空间离散化阈值
-        self.bins_w_accel = np.array([-0.3, 0.3])
-        self.bins_delta_w = np.array([-0.06, 0.06])
+        # 动作与观测空间
+        self.action_space = spaces.Discrete(3)
+        self.observation_space = spaces.MultiDiscrete([self.BANK_BINS, 3, 3])
 
-        # 动作与观测空间保持不变
-        self.action_space = spaces.Discrete(9)
-        self.observation_space = spaces.MultiDiscrete([3, 3])
-
-        bank_incre = np.deg2rad(15)
-        aoa_incre = np.deg2rad(3)
-        aoa_base = np.deg2rad(1)
-
-        self._action_mapping = {
-            0: (aoa_base,  -bank_incre),            1: (aoa_base,  0.0),            2: (aoa_base,            bank_incre),
-            3: (aoa_base+aoa_incre, -bank_incre),   4: (aoa_base+aoa_incre, 0.0),   5: (aoa_base+aoa_incre,  bank_incre),
-            6: (aoa_base+2*aoa_incre, -bank_incre), 7: (aoa_base+2*aoa_incre, 0.0), 8: (aoa_base+2*aoa_incre,bank_incre),
-        }
-
-        aoa_step = np.deg2rad(3)
-        bank_step = np.deg2rad(5)
-        self.aoa_step = aoa_step
-        self.bank_step = bank_step
-
-        self._inc_action_mapping = {
-            0: (-1, -1), 1: (-1,  0), 2: (-1,  1),
-            3: ( 0, -1), 4: ( 0,  0), 5: ( 0,  1),
-            6: ( 1, -1), 7: ( 1,  0), 8: ( 1,  1)
-        }
-        
-        # 增量模式的物理边界限制
-        self.aoa_bounds = [np.deg2rad(0), np.deg2rad(12)]
-        self.bank_bounds = [np.deg2rad(-20), np.deg2rad(20)]
         self.hysteresis_pct = hysteresis_pct
         
         # 用于记录上一次的分箱索引，实现施密特触发器逻辑
@@ -209,18 +199,11 @@ class GliderEnv(gym.Env):
         self.last_idx_dw = None
 
     def step(self, action):
-        if self.mode ==0:
-            target_alpha, target_bank = self._action_mapping[action]
-            self.control_state[0] = target_alpha
-            self.control_state[1] = target_bank
-        else:
-            da_idx, db_idx = self._inc_action_mapping[action]
-            self.control_state[0] += da_idx * self.aoa_step
-            self.control_state[1] += db_idx * self.bank_step
-            
-            # 必须进行数值裁剪，防止超出极点图插值范围或发生物理翻转
-            self.control_state[0] = np.clip(self.control_state[0], *self.aoa_bounds)
-            self.control_state[1] = np.clip(self.control_state[1], *self.bank_bounds)
+        # 0: bank -5 deg, 1: bank +0 deg, 2: bank +5 deg
+        self.bank_idx = np.clip(self.bank_idx + (action - 1), 0, self.BANK_BINS - 1)
+        
+        aoa_rad = np.deg2rad(self.AOA_FIXED_DEG)
+        bank_rad = np.deg2rad(self.BANK_MIN_DEG + self.bank_idx * self.BANK_STEP_DEG)
 
         sum_w_accel = 0.0
         sum_delta_w = 0.0
@@ -234,7 +217,7 @@ class GliderEnv(gym.Env):
             
             # 获取当前位置风速 (使用当前锁定的风场帧)
             w_vec_start = self.wind_manager.get_wind(x, y, z) * self.wind_ampf
-            v_tas, gamma, dchi_dt = self.physics.get_steady_state(self.control_state[0], self.control_state[1])
+            v_tas, gamma, dchi_dt = self.physics.get_steady_state(aoa_rad, bank_rad)
             
             # 位移计算使用自定义的 dt_integration
             dx = (v_tas * np.cos(gamma) * np.cos(chi) + w_vec_start[0]) * self.dt_integration
@@ -284,7 +267,7 @@ class GliderEnv(gym.Env):
         info = {
             "w_accel": self.w_accel, 
             "delta_w": self.delta_w, 
-            "control": self.control_state, 
+            "control": [aoa_rad, bank_rad], 
             "height": self.phy_state[2],
             "tas": v_tas,
             "uz": current_uz
@@ -304,7 +287,7 @@ class GliderEnv(gym.Env):
             init_dir = 0
         self.initial_z = z
         self.phy_state = np.array([x, y, z, init_dir])
-        self.control_state = np.array([np.deg2rad(5.0), 0.0])
+        self.bank_idx = 3 # Start at 0 degrees (index 3 of 0..6)
         self.w_accel, self.delta_w = 0.0, 0.0
         self.last_idx_az = None
         self.last_idx_dw = None
@@ -334,10 +317,10 @@ class GliderEnv(gym.Env):
 
     def _get_obs(self):
         # 分别计算带迟滞的索引
-        self.last_idx_az = self._apply_hysteresis(self.w_accel, self.bins_w_accel, self.last_idx_az)
-        self.last_idx_dw = self._apply_hysteresis(self.delta_w, self.bins_delta_w, self.last_idx_dw)
+        self.last_idx_az = self._apply_hysteresis(self.w_accel, self.BINS_W_ACCEL, self.last_idx_az)
+        self.last_idx_dw = self._apply_hysteresis(self.delta_w, self.BINS_DELTA_W, self.last_idx_dw)
         
-        return np.array([self.last_idx_az, self.last_idx_dw], dtype=np.int32)
+        return np.array([self.bank_idx, self.last_idx_az, self.last_idx_dw], dtype=np.int32)
     
     def close(self):
             if hasattr(self, 'wind_manager'):

@@ -1,51 +1,71 @@
 import pickle
 import numpy as np
+import os
 import matplotlib.pyplot as plt
+from glider_discrete_simp import GliderEnv
 
+# 1. 加载 Q-table
+# 注意：现在 Q-table 的形状应为 (BANK_BINS, 3, 3, 3) -> (Bank, Accel, Diff, Action)
+Q_TABLE_DIR = "q_table"
+#Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_ideal.pkl")
+Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_v0.pkl")
+try:
+    q_table = pickle.load(open(Q_TABLE_PATH, "rb"))
+    print(f"成功加载 Q-table: {Q_TABLE_PATH}, shape: {q_table.shape}")
+except Exception as e:
+    print(f"加载失败: {e}")
+    # 创建一个全零的 Q-table 仅用于测试绘图逻辑 (如果文件不存在)
+    q_table = np.zeros((GliderEnv.BANK_BINS, 3, 3, 3))
 
-q_table = pickle.load(open("q_table_ideal.pkl", "rb"))
+# 2. 绘图配置
+# 我们将为 7 个不同的 Bank Angle 分别绘制一个 3x3 的风场状态矩阵
+fig, axes = plt.subplots(GliderEnv.BANK_BINS, 1, figsize=(10, 2 * GliderEnv.BANK_BINS), sharex=True)
+if GliderEnv.BANK_BINS == 1:
+    axes = [axes]
 
-# 状态标签排序 (dw 为外循环，acc 为内循环，匹配图示顺序)
-symbols = ["-", "0", "+"]
-obs_labels = []
-best_actions = []
+# 状态标签
+symbols = GliderEnv.OBS_WIND_SYMBOLS # ["-", "0", "+"]
+action_mapping = GliderEnv.ACTION_LABELS # {0: bank-5, 1: bank+0, 2: bank+5}
 
-for dw in range(3):
-    for acc in range(3):
-        obs_labels.append(f"{symbols[acc]}|{symbols[dw]}")
-        best_actions.append(np.argmax(q_table[acc, dw]))
+# 3. 循环绘图
+for b_idx in range(GliderEnv.BANK_BINS):
+    ax = axes[b_idx]
+    bank_deg = GliderEnv.BANK_MIN_DEG + b_idx * GliderEnv.BANK_STEP_DEG
+    
+    obs_labels = []
+    best_actions = []
+    
+    # 遍历风场状态 (dw 为外循环，acc 为内循环)
+    for dw_idx in range(3):
+        for acc_idx in range(3):
+            obs_labels.append(f"{symbols[acc_idx]}|{symbols[dw_idx]}")
+            # Q-table 索引顺序: [bank, acc, dw, action]
+            best_actions.append(np.argmax(q_table[b_idx, acc_idx, dw_idx]))
 
-# 3. 箭头映射函数 (基于 glider_discrete_simp.py 的动作定义)
-def get_arrow_style(action):
-    # 标记映射：(LaTeX箭头, 颜色)
-    # 0-2: Low AoA (Blue), 3-5: Mid AoA (Orange), 6-8: High AoA (Red)
-    mapping = {
-        0: (r"$\swarrow$", 'blue'),   1: (r"$\downarrow$", 'blue'), 2: (r"$\searrow$", 'blue'),
-        3: (r"$\leftarrow$", 'orange'), 4: (r"$\bullet$", 'green'),    5: (r"$\rightarrow$", 'orange'),
-        6: (r"$\nwarrow$", 'red'),    7: (r"$\uparrow$", 'red'),    8: (r"$\nearrow$", 'red')
-    }
-    return mapping.get(action)
+    # 绘制动作箭头
+    for i, action in enumerate(best_actions):
+        marker = action_mapping.get(action, "?")
+        # 0: 蓝色 (减小), 1: 绿色 (保持), 2: 红色 (增加)
+        color = 'blue' if action == 0 else ('green' if action == 1 else 'red')
+        ax.scatter(i, 0, marker=marker, s=800, color=color)
 
-# 4. 绘图 (单行排列)
-fig, ax = plt.subplots(figsize=(10, 2))
+    # 子图装饰
+    ax.set_yticks([])
+    ax.set_ylim(-0.5, 0.5)
+    ax.set_xlim(-0.5, 8.5)
+    ax.set_ylabel(f"Bank {bank_deg:+.0f}°", rotation=0, labelpad=40, va='center', fontsize=10)
+    
+    # 隐藏边框
+    for spine in ["top", "left", "right"]:
+        ax.spines[spine].set_visible(False)
+    ax.spines["bottom"].set_alpha(0.3)
 
-for i, action in enumerate(best_actions):
-    marker, color = get_arrow_style(action)
-    # 在 y=0 处绘制散点，使用 LaTeX 箭头作为 marker
-    ax.scatter(i, 0, marker=marker, s=1000, color=color)
+# 设置最底部的 X 轴标签
+axes[-1].set_xticks(range(9))
+axes[-1].set_xticklabels(obs_labels, fontsize=10)
+axes[-1].set_xlabel(r"Wind State Combination ($a_z | \tau$)", fontsize=12, labelpad=10)
 
-# 坐标轴美化
-ax.set_xticks(range(9))
-ax.set_xticklabels(obs_labels, fontsize=12)
-ax.set_yticks([]) 
-ax.set_ylim(-0.5, 0.5)
-ax.set_xlim(-0.5, 8.5)
-ax.set_xlabel(r"State Combination ($a_z | \tau$)", fontsize=12, labelpad=10)
-
-# 隐藏多余边框
-for spine in ["top", "left", "right"]:
-    ax.spines[spine].set_visible(False)
-ax.spines["bottom"].set_position(("data", -0.2))
-
-plt.tight_layout()
+plt.suptitle(f"Q-Table Strategy Visualization (AOA Fixed at {GliderEnv.AOA_FIXED_DEG}°)", fontsize=14, y=0.98)
+plt.tight_layout(rect=[0, 0, 1, 0.96])
+plt.savefig("trainresult/policy.png", dpi=300)
 plt.show()

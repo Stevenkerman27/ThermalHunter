@@ -17,8 +17,9 @@ def simulate_with_env():
     wind_dir = os.path.join(base_dir, 'wind')
     h5_files = sorted(glob.glob(os.path.join(wind_dir, 'snapshots_s*.h5')), key=natural_key)
     
-    Q_TABLE_PATH = "q_table_v0.pkl"
-    #Q_TABLE_PATH = "q_table_ideal.pkl"
+    Q_TABLE_DIR = "q_table"
+    Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_ideal.pkl")
+    #Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_v0.pkl")
 
     if not h5_files:
         print("错误：未找到风场文件。")
@@ -53,7 +54,7 @@ def simulate_with_env():
     uz_history = []
     reward_hst = []
     w_accels, delta_ws = [], []
-    obs_w_accels, obs_delta_ws = [], [] 
+    obs_bank_idxs, obs_w_accel_idxs, obs_delta_w_idxs = [], [], [] 
     aoa, bank = [], []
     
     max_steps = 1000
@@ -78,8 +79,9 @@ def simulate_with_env():
         bank.append(info["control"][1])
         
         # 记录离散观察值和奖励
-        obs_w_accels.append(obs[0])
-        obs_delta_ws.append(obs[1])
+        obs_bank_idxs.append(obs[0])
+        obs_w_accel_idxs.append(obs[1])
+        obs_delta_w_idxs.append(obs[2])
         reward_hst.append(reward)
 
         if terminated or truncated:
@@ -94,14 +96,14 @@ def simulate_with_env():
         np.array(uz_history),
         np.array(reward_hst),
         np.array(w_accels), np.array(delta_ws), 
-        np.array(obs_w_accels), np.array(obs_delta_ws),
+        np.array(obs_bank_idxs), np.array(obs_w_accel_idxs), np.array(obs_delta_w_idxs),
         np.array(aoa), np.array(bank),
         env, CONFIG["domain_size"]
     )
     
     env.close()
 
-def _plot_all_results(history, tas, uz, reward_hst, w_accels, delta_ws, obs_w_accels, obs_delta_ws, aoa, bank, env, domain_size):
+def _plot_all_results(history, tas, uz, reward_hst, w_accels, delta_ws, obs_bank_idxs, obs_w_accel_idxs, obs_delta_w_idxs, aoa, bank, env, domain_size):
     times = np.arange(len(tas)) * env.dt_rl
 
     # --- 图 1: 3D 轨迹图 ---
@@ -137,14 +139,14 @@ def _plot_all_results(history, tas, uz, reward_hst, w_accels, delta_ws, obs_w_ac
     # 1. 风加速度
     ax1.plot(times, w_accels, color='steelblue', label='Actual $w_{accel}$')
     ax1_tw = ax1.twinx()
-    ax1_tw.step(times, obs_w_accels, where='post', color='green', alpha=0.5, label='Obs Index')
+    ax1_tw.step(times, obs_w_accel_idxs, where='post', color='green', alpha=0.5, label='Obs Index')
     ax1.set_ylabel('Accel ($m/s^2$)'); ax1.set_title("Wind Vertical Acceleration")
     ax1.grid(True, alpha=0.3)
 
     # 2. 翼尖风速差
     ax2.plot(times, delta_ws, color='forestgreen', label='Actual $\delta_w$')
     ax2_tw = ax2.twinx()
-    ax2_tw.step(times, obs_delta_ws, where='post', color='red', alpha=0.5, label='Obs Index')
+    ax2_tw.step(times, obs_delta_w_idxs, where='post', color='red', alpha=0.5, label='Obs Index')
     ax2.set_ylabel('Diff ($m/s$)'); ax2.set_title("Wingtip Wind Difference")
     ax2.grid(True, alpha=0.3)
 
@@ -157,7 +159,13 @@ def _plot_all_results(history, tas, uz, reward_hst, w_accels, delta_ws, obs_w_ac
     ax3.step(times, np.rad2deg(bank), where='post', color='red', label='Bank')
     ax3_tw = ax3.twinx()
     ax3_tw.step(times, np.rad2deg(aoa), where='post', color='green', label='AoA')
-    ax3.set_ylabel('Bank (red)'); ax3_tw.set_ylabel('AoA (green)')
+    
+    # 新增 Bank Index 绘图
+    ax3_tw2 = ax3.twinx()
+    ax3_tw2.spines["right"].set_position(("axes", 1.1))
+    ax3_tw2.step(times, obs_bank_idxs, where='post', color='blue', alpha=0.3, label='Bank Index')
+    
+    ax3.set_ylabel('Bank (red)'); ax3_tw.set_ylabel('AoA (green)'); ax3_tw2.set_ylabel('Bank Index (blue)')
     ax3.set_title("Control Inputs")
     ax3.grid(True, alpha=0.3)
 

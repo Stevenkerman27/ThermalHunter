@@ -45,24 +45,26 @@ GAMMA = 0.98
 EPSILON_START = 1.0
 EPSILON_END = 0.2
 EPISODES = 8000
-SAVE_PATH = "q_table_v0.pkl"
+Q_TABLE_DIR = "q_table"
+os.makedirs(Q_TABLE_DIR, exist_ok=True)
+SAVE_PATH = os.path.join(Q_TABLE_DIR, "q_table_v0.pkl")
 SAVE_INTERVAL = 2000  # 每隔 N 个 episode 保存一次 qtable
 
-# 初始化 Q 表: 状态空间 [3, 3], 动作空间 [9]
-q_table = np.full((3, 3, 9), 0, dtype=np.float32)
+# 初始化 Q 表: 状态空间 [7, 3, 3], 动作空间 [3]
+q_table = np.zeros((7, 3, 3, 3), dtype=np.float32)
 
 epsilon_decay_step = (EPSILON_START - EPSILON_END) / EPISODES
 epsilon = EPSILON_START
 
 def select_action(state, epsilon):
-    # state 为 [idx_az, idx_dw]
+    # state 为 [bank_idx, idx_az, idx_dw]
     if np.random.random() < epsilon:
         return env.action_space.sample()
     return np.argmax(q_table[tuple(state)])
 
 rewards_history = []
 
-track_indices = [(0, 0, 8), (0, 1, 7), (2,2,0), (2, 0, 2)] 
+track_indices = [(3, 1, 1, 1), (3, 2, 2, 0), (3, 0, 0, 2)] 
 q_value_history = {idx: [] for idx in track_indices}
 print(f"开始训练... 状态空间: {env.observation_space}, 动作空间: {env.action_space}, 追踪 Q 表索引: {track_indices}")
 start_time = time.perf_counter()
@@ -97,6 +99,8 @@ for episode in range(EPISODES):
         state = next_state
         total_reward += reward
     for idx in track_indices:
+        # 追踪特定状态下的所有动作 Q 值中的一个，或者修改为追踪特定动作
+        # 这里原代码逻辑是 q_table[idx]，idx 为 (s0, s1, a)
         q_value_history[idx].append(q_table[idx])
 
     rewards_history.append(total_reward)
@@ -114,7 +118,7 @@ for episode in range(EPISODES):
     
     # 每隔 SAVE_INTERVAL 个 episode 保存一次 qtable
     if (episode + 1) % SAVE_INTERVAL == 0:
-        save_path = f"q_table_E_{episode+1}.pkl"
+        save_path = os.path.join(Q_TABLE_DIR, f"q_table_E_{episode+1}.pkl")
         with open(save_path, "wb") as f:
             pickle.dump(q_table, f)
         print(f"已保存 Q-table 到 {save_path}")
