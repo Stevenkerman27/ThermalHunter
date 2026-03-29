@@ -2,7 +2,7 @@ import os
 import numpy as np
 import h5py
 import glob
-from glider_discrete import RBWindField  # 假设你的原文件名为 glider_discrete.py
+from glider_discrete_simp import RBWindField
 
 def test_wind_reading():
     # 1. 路径设置

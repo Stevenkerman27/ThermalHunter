@@ -1,0 +1,2 @@
+修改强化学习配置。修改observation为滚转角(-15-15度，5度一step)和的w_accel和delta_w. 动作修改为增加/减少5度滚转角，删除迎角控制。修改滑翔机物理为以固定的9度迎角飞行
+要求：在环境定义代码中统一定义action and observation，eval.py和readpkl.py均从环境定义代码读取配置，保证action和observation定义统一
