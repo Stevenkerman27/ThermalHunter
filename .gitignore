@@ -1,4 +1,5 @@
 wind/
 archive
 pics/
-practice/
+__pycache__/
+.vscode/

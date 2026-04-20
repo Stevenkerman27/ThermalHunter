@@ -12,3 +12,4 @@ glider_train.py为训练代码
 1. 物理计算优化：由于 AoA 固定且 Bank 离散，使用 `physics_table` 预计算平衡状态，避免在 `step` 中调用 `scipy.interpolate`。
 2. 状态空间：BANK_BINS=7, W_ACCEL=3, DELTA_W=3。
 3. 训练速度：不使用多线程时，通过减少 Python 解释器开销可达到 ~5000 steps/s。
+4. 奖励函数：采用混合稠密奖励 `reward = current_uz + 5*w_accel + (dz * lambda)`。其中 `dz * lambda` 为每步高度变化奖励，用于解决长序列中的信用分配(Credit Assignment)问题。

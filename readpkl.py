@@ -50,7 +50,7 @@ for b_idx in range(GliderEnv.BANK_BINS):
     ax.set_yticks([])
     ax.set_ylim(-0.5, 0.5)
     ax.set_xlim(-0.5, 8.5)
-    ax.set_ylabel(f"Bank {bank_deg:+.0f}°", rotation=0, labelpad=40, va='center', fontsize=10)
+    ax.set_ylabel(f"Bank {bank_deg:+.0f}°", rotation=0, labelpad=40, va='center', fontsize=14)
     
     # 隐藏边框
     for spine in ["top", "left", "right"]:
@@ -59,10 +59,9 @@ for b_idx in range(GliderEnv.BANK_BINS):
 
 # 设置最底部的 X 轴标签
 axes[-1].set_xticks(range(9))
-axes[-1].set_xticklabels(obs_labels, fontsize=10)
-axes[-1].set_xlabel(r"Wind State Combination ($a_z | \tau$)", fontsize=12, labelpad=10)
+axes[-1].set_xticklabels(obs_labels, fontsize=14)
+axes[-1].set_xlabel(r"State ($a_z | \tau$)", fontsize=14, labelpad=10)
 
-plt.suptitle(f"Q-Table Strategy Visualization (AOA Fixed at {GliderEnv.AOA_FIXED_DEG}°)", fontsize=14, y=0.98)
 plt.tight_layout(rect=[0, 0, 1, 0.96])
 plt.savefig("trainresult/policy.png", dpi=300)
 plt.show()

@@ -9,11 +9,11 @@ import seaborn as sns
 import pandas as pd
 
 # --- 配置区 ---
-N_EPISODES = 500  
+N_EPISODES = 500
 POLAR_BASE = "glider"
 Q_TABLE_DIR = "q_table"
 Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_v0.pkl")
-#Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_high.pkl")
+#Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_low.pkl")
 
 with open(Q_TABLE_PATH, "rb") as f:
     q_table = pickle.load(f)
@@ -55,20 +55,20 @@ if __name__ == "__main__":
     
     # 打印 Reward 结果（保留原功能）
     print(f"--- Reward 统计 ---")
-    print(f"随机策略: Mean={np.mean(rnd_rewards):.2f}, Std={np.std(rnd_rewards):.2f}")
-    print(f"专家策略: Mean={np.mean(exp_rewards):.2f}, Std={np.std(exp_rewards):.2f}")
+    print(f"随机策略: Mean reward={np.mean(rnd_rewards):.2f}, Std={np.std(rnd_rewards):.2f}")
+    print(f"专家策略: Mean reward={np.mean(exp_rewards):.2f}, Std={np.std(exp_rewards):.2f}")
 
     # 整理爬升高度数据用于绘图
     df = pd.DataFrame({
         'Climb': rnd_climbs + exp_climbs,
-        'Policy': ['Random'] * N_EPISODES + ['Strategy'] * N_EPISODES
+        'Policy': ['Random Policy'] * N_EPISODES + ['Trained Policy'] * N_EPISODES
     })
 
     # --- 使用 Seaborn 可视化 ---
     plt.figure(figsize=(7, 7))
     sns.set_style("white")
     
-    my_colors = {"Random": "#7f7f7f", "Strategy": "#d62728"}
+    my_colors = {"Random Policy": "#7f7f7f", "Trained Policy": "#d62728"}
 
     # 1. 散点图
     ax = sns.stripplot(data=df, x='Policy', y='Climb', palette=my_colors, 
@@ -81,9 +81,9 @@ if __name__ == "__main__":
                 medianprops={'color':'#ff7f0e', 'linewidth':2})
 
     # 3. 在图中直接显示平均值和方差
-    policies = ['Random', 'Strategy']
+    policies = ['Random Policy', 'Trained Policy']
     data_list = [rnd_climbs, exp_climbs]
-    
+
     for i, p in enumerate(policies):
         mean_val = np.mean(data_list[i])
         std_val = np.std(data_list[i])
@@ -93,12 +93,14 @@ if __name__ == "__main__":
         
         text_str = f"$\mu={mean_val:.1f}$\n$\sigma={std_val:.1f}$"
         plt.text(i, y_pos, text_str, ha='center', va='bottom', 
-                 fontsize=10, fontweight='bold', color=my_colors[p])
+                 fontsize=16, fontweight='bold', color=my_colors[p])
+        
+    plt.tick_params(axis='both', which='major', labelsize=14)
 
     # 装饰
     plt.gca().spines['top'].set_visible(False)
     plt.gca().spines['right'].set_visible(False)
-    plt.ylabel("Episodic Climb Height (m)", fontsize=12)
+    plt.ylabel("Episodic Climb Height (m)", fontsize=20)
     plt.xlabel("")
     
     # 画一条 y=0 的水平参考线

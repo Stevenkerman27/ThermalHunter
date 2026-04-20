@@ -40,11 +40,11 @@ env = gym.make(
 )
 
 # --- Q-Learning 配置 ---
-ALPHA = 0.01
-GAMMA = 0.98
+ALPHA = 0.04
+GAMMA = 0.99
 EPSILON_START = 1.0
-EPSILON_END = 0.1
-EPISODES = 20000
+EPSILON_END = 0.05
+EPISODES = 8000
 Q_TABLE_DIR = "q_table"
 os.makedirs(Q_TABLE_DIR, exist_ok=True)
 SAVE_PATH = os.path.join(Q_TABLE_DIR, "q_table_v0.pkl")
@@ -53,7 +53,7 @@ SAVE_INTERVAL = 2000  # 每隔 N 个 episode 保存一次 qtable
 # 初始化 Q 表: 状态空间 [7, 3, 3], 动作空间 [3]
 q_table = np.zeros((7, 3, 3, 3), dtype=np.float32)
 
-epsilon_decay_step = (EPSILON_START - EPSILON_END) / EPISODES
+epsilon_decay_step = (EPSILON_START - EPSILON_END) / (EPISODES * 0.7)
 epsilon = EPSILON_START
 
 def select_action(state, epsilon):
@@ -72,8 +72,9 @@ start_time = time.perf_counter()
 total_steps = 0
 
 for episode in range(EPISODES):
-    # 环境 reset 返回 (obs, info)
-    state, info = env.reset(options={"resettime": 80})
+    # 随机化起始时间点，总步数 600，预留足够时间完成一个 episode
+    random_reset_time = np.random.randint(30, 300)
+    state, info = env.reset(options={"resettime": random_reset_time})
     h_start = info["height"]
     total_reward = 0
     done = False

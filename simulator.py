@@ -18,8 +18,8 @@ def simulate_with_env():
     h5_files = sorted(glob.glob(os.path.join(wind_dir, 'snapshots_s*.h5')), key=natural_key)
     
     Q_TABLE_DIR = "q_table"
-    #Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_ideal.pkl")
     Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_v0.pkl")
+    #Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_E_20000.pkl")
 
     if not h5_files:
         print("错误：未找到风场文件。")

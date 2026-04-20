@@ -158,8 +158,8 @@ class GliderEnv(gym.Env):
     AOA_FIXED_DEG = 9.0
     
     # Sensor thresholds (unchanged)
-    BINS_W_ACCEL = np.array([-0.3, 0.3])
-    BINS_DELTA_W = np.array([-0.1, 0.1])
+    BINS_W_ACCEL = np.array([-0.2, 0.2])
+    BINS_DELTA_W = np.array([-0.2, 0.2])
     
     # String labels for external visualization scripts
     ACTION_LABELS = {
@@ -170,7 +170,7 @@ class GliderEnv(gym.Env):
     OBS_WIND_SYMBOLS = ["-", "0", "+"]
 
     def __init__(self, h5_file_path, polar_file_base, domain_size=(1000.0, 1000.0, 1000.0), 
-                 dt_rl=1.0, n_phys_per_rl=2, rl_steps_per_frame=2, wind_ampf=12, hysteresis_pct=0.1, random_init = True):
+                 dt_rl=1.0, n_phys_per_rl=2, rl_steps_per_frame=2, wind_ampf=12, hysteresis_pct=0.1, random_init = True, reward_lambda=2.0):
         super().__init__()
         self.wind_manager = RBWindField(h5_file_path, domain_size=domain_size)
         self.physics = GliderPhysics(polar_file_base)
@@ -184,7 +184,7 @@ class GliderEnv(gym.Env):
         self.dt_integration = dt_rl / n_phys_per_rl    # 每次物理积分的实际Delta T
         
         self.wind_ampf = wind_ampf
-        self.b = 6.0 # 翼展
+        self.b = 10.0 # 翼展
         self.reward_survive = 0
         self.rl_step_counter = 0                       # 用于追踪RL步数以更新风场
 
@@ -193,6 +193,7 @@ class GliderEnv(gym.Env):
         self.observation_space = spaces.MultiDiscrete([self.BANK_BINS, 3, 3])
 
         self.hysteresis_pct = hysteresis_pct
+        self.reward_lambda = reward_lambda
         
         # 用于记录上一次的分箱索引，实现施密特触发器逻辑
         self.last_idx_az = None
@@ -228,6 +229,7 @@ class GliderEnv(gym.Env):
         sum_delta_w = 0.0
         terminated = False
         truncated = False
+        z_old = self.phy_state[2]
 
         # --- 物理积分循环 ---
         # 在这 n_phys_per_rl 步中，风场帧保持不变
@@ -255,7 +257,11 @@ class GliderEnv(gym.Env):
             pos_r = self.phy_state[:3] + (self.b / 2.0) * side_vec
             pos_r[:2] %= self.domain_size[:2]
             pos_r[2] = np.clip(pos_r[2], 0, self.domain_size[2] - 0.01)
-            pos_l = (self.phy_state[:3] - (self.b / 2.0) * side_vec) % self.domain_size
+            
+            pos_l = self.phy_state[:3] - (self.b / 2.0) * side_vec
+            pos_l[:2] %= self.domain_size[:2]
+            pos_l[2] = np.clip(pos_l[2], 0, self.domain_size[2] - 0.01)
+            
             w_r = self.wind_manager.get_wind(*pos_r)[2] * self.wind_ampf
             w_l = self.wind_manager.get_wind(*pos_l)[2] * self.wind_ampf
             sum_delta_w += (w_r - w_l)
@@ -277,10 +283,12 @@ class GliderEnv(gym.Env):
         
         # 奖励计算
         current_uz = self.wind_manager.get_wind(*self.phy_state[:3])[2] * self.wind_ampf
-        reward = current_uz + 5* self.w_accel + self.reward_survive
+        height_change = self.phy_state[2] - z_old
+        reward = current_uz + 5* self.w_accel + self.reward_survive + height_change * self.reward_lambda
 
-        if terminated or truncated:
-            reward += (self.phy_state[2]-self.initial_z)*0.2
+        if terminated:
+            # 仅在真正结束（撞地或飞出）时给予高度奖惩
+            reward += (self.phy_state[2]-self.initial_z)
 
         info = {
             "w_accel": self.w_accel, 
