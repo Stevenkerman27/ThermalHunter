@@ -7,6 +7,7 @@ import os
 import pandas as pd
 from scipy.interpolate import interp1d
 from numba import njit
+import config
 
 @njit
 def trilinear(cube, dx, dy, dz):
@@ -15,7 +16,7 @@ def trilinear(cube, dx, dy, dz):
     return c1[0] * (1 - dz) + c1[1] * dz
 
 class RBWindField:
-    def __init__(self, h5_paths, domain_size=(1000, 1000, 1000)):
+    def __init__(self, h5_paths, domain_size=config.DOMAIN_SIZE):
         def natural_key(string_):
             return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_)]
 
@@ -117,7 +118,7 @@ class RBWindField:
             gc.collect()
 
 class GliderPhysics:
-    def __init__(self, polar_file_base, mass=2, area=0.3):
+    def __init__(self, polar_file_base, mass=config.MASS, area=config.AREA):
         self.m, self.A, self.g, self.rho = mass, area, 9.81, 1.225
         self.aero_interp = self.load_polar_data(polar_file_base)
 
@@ -150,16 +151,15 @@ class GliderPhysics:
         return v_tas, gamma_rad, dchi_dt
 
 class GliderEnv(gym.Env):
-    # --- Centralized RL Configuration ---
-    BANK_MIN_DEG = -15.0
-    BANK_MAX_DEG = 15.0
-    BANK_STEP_DEG = 5.0
-    BANK_BINS = int((BANK_MAX_DEG - BANK_MIN_DEG) / BANK_STEP_DEG) + 1  # 7 bins
-    AOA_FIXED_DEG = 9.0
+    # --- Centralized RL Configuration (From config.py) ---
+    BANK_MIN_DEG = config.BANK_MIN_DEG
+    BANK_MAX_DEG = config.BANK_MAX_DEG
+    BANK_STEP_DEG = config.BANK_STEP_DEG
+    BANK_BINS = config.BANK_BINS
+    AOA_FIXED_DEG = config.AOA_FIXED_DEG
     
-    # Sensor thresholds (unchanged)
-    BINS_W_ACCEL = np.array([-0.2, 0.2])
-    BINS_DELTA_W = np.array([-0.2, 0.2])
+    BINS_W_ACCEL = config.BINS_W_ACCEL
+    BINS_DELTA_W = config.BINS_DELTA_W
     
     # String labels for external visualization scripts
     ACTION_LABELS = {
@@ -169,8 +169,9 @@ class GliderEnv(gym.Env):
     }
     OBS_WIND_SYMBOLS = ["-", "0", "+"]
 
-    def __init__(self, h5_file_path, polar_file_base, domain_size=(1000.0, 1000.0, 1000.0), 
-                 dt_rl=1.0, n_phys_per_rl=2, rl_steps_per_frame=2, wind_ampf=12, hysteresis_pct=0.1, random_init = True, reward_lambda=2.0):
+    def __init__(self, h5_file_path, polar_file_base, domain_size=config.DOMAIN_SIZE, 
+                 dt_rl=config.DT_RL, n_phys_per_rl=config.N_PHYS_PER_RL, rl_steps_per_frame=config.RL_STEPS_PER_FRAME, 
+                 wind_ampf=config.WIND_AMPF, hysteresis_pct=config.HYSTERESIS_PCT, random_init=True, reward_lambda=config.REWARD_LAMBDA):
         super().__init__()
         self.wind_manager = RBWindField(h5_file_path, domain_size=domain_size)
         self.physics = GliderPhysics(polar_file_base)
@@ -184,8 +185,8 @@ class GliderEnv(gym.Env):
         self.dt_integration = dt_rl / n_phys_per_rl    # 每次物理积分的实际Delta T
         
         self.wind_ampf = wind_ampf
-        self.b = 10.0 # 翼展
-        self.reward_survive = 0
+        self.b = config.WINGSPAN
+        self.reward_survive = config.REWARD_SURVIVE
         self.rl_step_counter = 0                       # 用于追踪RL步数以更新风场
 
         # 动作与观测空间

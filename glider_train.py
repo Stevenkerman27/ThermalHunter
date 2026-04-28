@@ -7,6 +7,8 @@ import os
 import re
 import pickle
 import time
+from eval import run_eval, plot_climb_results
+import config
 
 # --- 环境注册 ---
 try:
@@ -22,36 +24,29 @@ except:
 def natural_key(string_):
     return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_)]
 
-base_dir = os.path.dirname(os.path.abspath(__file__))
-wind_dir = os.path.join(base_dir, 'wind')
-
 # 自动搜索 h5 文件
-h5_files = sorted(glob.glob(os.path.join(wind_dir, 'snapshots_s*.h5')), key=natural_key)
+h5_files = sorted(glob.glob(os.path.join(config.WIND_DIR, 'snapshots_s*.h5')), key=natural_key)
 if not h5_files:
-    raise FileNotFoundError(f"未在 {wind_dir} 下找到风场 h5 文件")
-
-polar_base = "glider"
+    raise FileNotFoundError(f"未在 {config.WIND_DIR} 下找到风场 h5 文件")
 
 # --- 实例化环境 ---
 env = gym.make(
     "GliderDiscrete-v0", 
     h5_file_path=h5_files, 
-    polar_file_base=polar_base,
+    polar_file_base=config.POLAR_BASE,
 )
 
 # --- Q-Learning 配置 ---
-ALPHA = 0.04
-GAMMA = 0.99
-EPSILON_START = 1.0
-EPSILON_END = 0.05
-EPISODES = 8000
-Q_TABLE_DIR = "q_table"
-os.makedirs(Q_TABLE_DIR, exist_ok=True)
-SAVE_PATH = os.path.join(Q_TABLE_DIR, "q_table_v0.pkl")
-SAVE_INTERVAL = 2000  # 每隔 N 个 episode 保存一次 qtable
+ALPHA = config.ALPHA
+GAMMA = config.GAMMA
+EPSILON_START = config.EPSILON_START
+EPSILON_END = config.EPSILON_END
+EPISODES = config.EPISODES
+SAVE_PATH = config.SAVE_PATH
+SAVE_INTERVAL = config.SAVE_INTERVAL
 
 # 初始化 Q 表: 状态空间 [7, 3, 3], 动作空间 [3]
-q_table = np.zeros((7, 3, 3, 3), dtype=np.float32)
+q_table = np.zeros((config.BANK_BINS, 3, 3, 3), dtype=np.float32)
 
 epsilon_decay_step = (EPSILON_START - EPSILON_END) / (EPISODES * 0.7)
 epsilon = EPSILON_START
@@ -65,7 +60,7 @@ def select_action(state, epsilon):
 rewards_history = []
 climb_history = []
 
-track_indices = [(3, 1, 1, 1), (3, 2, 2, 0), (3, 0, 0, 2)] 
+track_indices = config.TRACK_INDICES
 q_value_history = {idx: [] for idx in track_indices}
 print(f"开始训练... 状态空间: {env.observation_space}, 动作空间: {env.action_space}, 追踪 Q 表索引: {track_indices}")
 start_time = time.perf_counter()
@@ -126,7 +121,7 @@ for episode in range(EPISODES):
     
     # 每隔 SAVE_INTERVAL 个 episode 保存一次 qtable
     if (episode + 1) % SAVE_INTERVAL == 0:
-        save_path = os.path.join(Q_TABLE_DIR, f"q_table_E_{episode+1}.pkl")
+        save_path = os.path.join(config.Q_TABLE_DIR, f"q_table_E_{episode+1}.pkl")
         with open(save_path, "wb") as f:
             pickle.dump(q_table, f)
         print(f"已保存 Q-table 到 {save_path}")
@@ -136,13 +131,24 @@ with open(SAVE_PATH, "wb") as f:
     pickle.dump(q_table, f)
 
 print(f"训练完成，模型保存至 {SAVE_PATH}")
+# --- 自动评估 (利用已加载的环境) ---
+print("\n开始自动评估性能...")
+N_EVAL_EPISODES = config.N_EVAL_EPISODES 
+rnd_rewards, rnd_climbs = run_eval(env, q_table, n_episodes=N_EVAL_EPISODES, policy_type="random")
+exp_rewards, exp_climbs = run_eval(env, q_table, n_episodes=N_EVAL_EPISODES, policy_type="trained")
+
+print(f"--- 评估统计 ({N_EVAL_EPISODES} Episodes) ---")
+print(f"随机策略: Mean Climb={np.mean(rnd_climbs):.1f}m")
+print(f"训练策略: Mean Climb={np.mean(exp_climbs):.1f}m")
+
 env.close()
 
+# 绘制评估图表 (不立即阻塞 show)
+eval_plot_path = os.path.join(config.TRAIN_RESULT_DIR, "climb_eval_result.png")
+plot_climb_results(rnd_climbs, exp_climbs, save_path=eval_plot_path, show=False)
 
-ref_random, ref_best = 5, 200
-
-# 创建包含 3 个子图的画布，共享 X 轴（Episode）
-fig, (ax1, ax_climb, ax2) = plt.subplots(3, 1, figsize=(10, 8), sharex=True,gridspec_kw={'height_ratios': [2, 2, 1]})
+# --- 绘制训练曲线 ---
+fig, (ax1, ax_climb, ax2) = plt.subplots(3, 1, figsize=(10, 8), sharex=True, gridspec_kw={'height_ratios': [2, 2, 1]})
 
 # 子图 1: 奖励曲线
 ax1.plot(rewards_history, label='Total Reward', alpha=0.3, color='blue')
@@ -171,7 +177,6 @@ ax_climb.set_ylim(min(climb_history), max(climb_history))
 
 # --- 子图 2: 特定 Q 值变化 ---
 for idx, history in q_value_history.items():
-    # 使用 LaTeX 格式标记 Q(s, a)
     label_str = f"$Q(s:{idx[:2]}, a:{idx[2]})$"
     ax2.plot(history, label=label_str)
 
@@ -181,5 +186,6 @@ ax2.legend(loc='upper left')
 ax2.grid(True, linestyle='--', alpha=0.6)
 
 plt.tight_layout()
-plt.savefig("trainresult/train_result.png", dpi=300)
+train_plot_path = os.path.join(config.TRAIN_RESULT_DIR, "train_result.png")
+plt.savefig(train_plot_path, dpi=300)
 plt.show()
