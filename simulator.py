@@ -39,6 +39,7 @@ def simulate_with_env():
         h5_file_path=h5_files,
         polar_file_base=CONFIG["polar_base"],
         domain_size=CONFIG["domain_size"],
+        memory_mode=False,
     )
 
     with open(Q_TABLE_PATH, "rb") as f:

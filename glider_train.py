@@ -18,14 +18,10 @@ try:
         max_episode_steps=1000,
     )
 except:
-    pass # 防止重复注册报错
+    pass 
 
-# --- 路径与参数配置 ---
-def natural_key(string_):
-    return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_)]
-
-# 自动搜索 h5 文件
-h5_files = sorted(glob.glob(os.path.join(config.WIND_DIR, 'snapshots_s*.h5')), key=natural_key)
+# 使用 config 中的自然排序自动搜索 h5 文件
+h5_files = sorted(glob.glob(os.path.join(config.WIND_DIR, 'snapshots_s*.h5')), key=config.natural_key)
 if not h5_files:
     raise FileNotFoundError(f"未在 {config.WIND_DIR} 下找到风场 h5 文件")
 
@@ -45,8 +41,9 @@ EPISODES = config.EPISODES
 SAVE_PATH = config.SAVE_PATH
 SAVE_INTERVAL = config.SAVE_INTERVAL
 
-# 初始化 Q 表: 状态空间 [7, 3, 3], 动作空间 [3]
-q_table = np.zeros((config.BANK_BINS, 3, 3, 3), dtype=np.float32)
+# 初始化 Q 表: 动态根据环境空间定义形状
+q_table_shape = tuple(env.observation_space.nvec) + (env.action_space.n,)
+q_table = np.zeros(q_table_shape, dtype=np.float32)
 
 epsilon_decay_step = (EPSILON_START - EPSILON_END) / (EPISODES * 0.7)
 epsilon = EPSILON_START
@@ -67,8 +64,8 @@ start_time = time.perf_counter()
 total_steps = 0
 
 for episode in range(EPISODES):
-    # 随机化起始时间点，总步数 600，预留足够时间完成一个 episode
-    random_reset_time = np.random.randint(30, 300)
+    # 使用 config 中的随机重置时间范围
+    random_reset_time = np.random.randint(config.RESET_TIME_MIN, config.RESET_TIME_MAX)
     state, info = env.reset(options={"resettime": random_reset_time})
     h_start = info["height"]
     total_reward = 0

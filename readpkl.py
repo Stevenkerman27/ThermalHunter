@@ -5,23 +5,26 @@ import matplotlib.pyplot as plt
 from glider_discrete_simp import GliderEnv
 
 # 1. 加载 Q-table
-# 注意：现在 Q-table 的形状应为 (BANK_BINS, 3, 3, 3) -> (Bank, Accel, Diff, Action)
+# 注意：现在 Q-table 的形状应为 (AOA_BINS, BANK_BINS, 3, 3, 9)
 Q_TABLE_DIR = "q_table"
-#Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_high.pkl")
 Q_TABLE_PATH = os.path.join(Q_TABLE_DIR, "q_table_v0.pkl")
 
 q_table = pickle.load(open(Q_TABLE_PATH, "rb"))
 print(f"成功加载 Q-table: {Q_TABLE_PATH}, shape: {q_table.shape}")
 
 # 2. 绘图配置
-# 我们将为 7 个不同的 Bank Angle 分别绘制一个 3x3 的风场状态矩阵
-fig, axes = plt.subplots(GliderEnv.BANK_BINS, 1, figsize=(8, GliderEnv.BANK_BINS), sharex=True)
+# 我们将针对中间的 AoA 索引，为 7 个不同的 Bank Angle 分别绘制一个 3x3 的风场状态矩阵
+AOA_TO_PLOT = GliderEnv.AOA_BINS // 2
+aoa_deg = GliderEnv.AOA_MIN_DEG + AOA_TO_PLOT * GliderEnv.AOA_STEP_DEG
+
+fig, axes = plt.subplots(GliderEnv.BANK_BINS, 1, figsize=(10, GliderEnv.BANK_BINS), sharex=True)
 if GliderEnv.BANK_BINS == 1:
     axes = [axes]
 
 # 状态标签
 symbols = GliderEnv.OBS_WIND_SYMBOLS # ["-", "0", "+"]
-action_mapping = GliderEnv.ACTION_LABELS # {0: bank-5, 1: bank+0, 2: bank+5}
+# action_mapping: {0: A-B-, 1: A-B0, 2: A-B+, 3: A0B-, 4: A0B0, 5: A0B+, 6: A+B-, 7: A+B0, 8: A+B+}
+action_labels = GliderEnv.ACTION_LABELS
 
 # 3. 循环绘图
 for b_idx in range(GliderEnv.BANK_BINS):
@@ -36,31 +39,35 @@ for b_idx in range(GliderEnv.BANK_BINS):
     for dw_idx in range(3):
         for acc_idx in range(3):
             obs_labels.append(f"{symbols[acc_idx]}|{symbols[dw_idx]}")
-            # Q-table 索引顺序: [bank, acc, dw, action]
-            best_actions.append(np.argmax(q_table[b_idx, acc_idx, dw_idx]))
+            # Q-table 索引顺序: [aoa, bank, acc, dw, action]
+            best_actions.append(np.argmax(q_table[AOA_TO_PLOT, b_idx, acc_idx, dw_idx]))
 
-    # 绘制动作箭头
+    # 绘制动作文本/标识
     for i, action in enumerate(best_actions):
-        marker = action_mapping.get(action, "?")
-        # 0: 蓝色 (减小), 1: 绿色 (保持), 2: 红色 (增加)
-        color = 'blue' if action == 0 else ('green' if action == 1 else 'red')
-        ax.scatter(i, 0, marker=marker, s=600, color=color)
+        label = action_labels.get(action, "?")
+        # 根据动作分量决定颜色 (仅作为示例，这里逻辑可以根据需要调整)
+        # 4 是 A0B0 (保持)，颜色设为绿色
+        color = 'green' if action == 4 else 'red'
+        if "A-" in label or "B-" in label: color = 'blue'
+        
+        ax.text(i, 0, label, ha='center', va='center', fontsize=10, fontweight='bold', color=color)
 
     # 子图装饰
     ax.set_yticks([])
     ax.set_ylim(-0.5, 0.5)
     ax.set_xlim(-0.5, 8.5)
-    ax.set_ylabel(f"Bank {bank_deg:+.0f}°", rotation=0, labelpad=40, va='center', fontsize=14)
+    ax.set_ylabel(f"Bank {bank_deg:+.0f}°", rotation=0, labelpad=40, va='center', fontsize=12)
     
     # 隐藏边框
     for spine in ["top", "left", "right"]:
         ax.spines[spine].set_visible(False)
     ax.spines["bottom"].set_alpha(0.3)
 
+plt.suptitle(f"Policy Map (AoA = {aoa_deg:.1f}°)\nLabels: A(AoA) B(Bank), +/- (Inc/Dec), 0 (Keep)", fontsize=14)
 # 设置最底部的 X 轴标签
 axes[-1].set_xticks(range(9))
-axes[-1].set_xticklabels(obs_labels, fontsize=14)
-axes[-1].set_xlabel(r"State ($a_z | \tau$)", fontsize=14, labelpad=10)
+axes[-1].set_xticklabels(obs_labels, fontsize=12)
+axes[-1].set_xlabel(r"State ($a_z | \tau$)", fontsize=12, labelpad=10)
 
 plt.tight_layout(rect=[0, 0, 1, 0.96])
 plt.savefig("trainresult/policy.png", dpi=300)

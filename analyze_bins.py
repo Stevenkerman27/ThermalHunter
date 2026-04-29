@@ -1,58 +1,23 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from glider_discrete_simp import GliderEnv, RBWindField
+from glider_discrete_simp import GliderEnv
 import os
 import glob
-import h5py
 import config
 
-# --- 1. Monkeypatch: 让风场管理器进入“磁盘按需读取”模式 (低内存占用) ---
-def lazy_open_resources(self):
-    self.all_data = [] 
-    self.files = [] # 确保 files 列表存在
-    self.dsets_list = []
-    self.t_offsets = [0]
-    self.all_sim_times = []
-    
-    for path in self.h5_paths:
-        f = h5py.File(path, 'r')
-        self.files.append(f) # 保持文件开启状态
-        dset_group = {
-            'ux': f['tasks/ux'], # 注意：这里去掉了 [:]，不加载入内存
-            'uy': f['tasks/uy'],
-            'uz': f['tasks/uz'],
-            'buoyancy': f['tasks/buoyancy']
-        }
-        self.dsets_list.append(dset_group)
-        file_times = f['tasks/ux'].dims[0]['sim_time'][:]
-        self.all_sim_times.extend(file_times)
-        self.t_offsets.append(self.t_offsets[-1] + len(file_times))
-    
-    self.all_sim_times = np.array(self.all_sim_times)
-    self.max_t_idx = len(self.all_sim_times) - 1
-    if len(self.all_sim_times) > 1:
-        self.dt_phy = self.all_sim_times[1] - self.all_sim_times[0]
-    
-    first_shape = self.dsets_list[0]['ux'].shape
-    # RBWindField 内部索引顺序: (t, x, y, z)
-    self.space_range = [first_shape[1], first_shape[2], first_shape[3]]
-    print(f"Lazy WindField (Disk-based) initialized. Total steps: {self.max_t_idx + 1}")
-
-# 替换原始方法
-RBWindField._open_resources = lazy_open_resources
-
-# --- 2. 配置环境 ---
+# --- 1. 配置环境 ---
 h5_files = sorted(glob.glob(os.path.join(config.WIND_DIR, 'snapshots_s*.h5')))
 
 if not h5_files:
     print(f"Error: No wind files found in '{config.WIND_DIR}' directory.")
     exit()
 
-env = GliderEnv(h5_file_path=h5_files, polar_file_base=config.POLAR_BASE)
+# 使用 memory_mode=False 进入“磁盘按需读取”模式 (低内存占用)
+env = GliderEnv(h5_file_path=h5_files, polar_file_base=config.POLAR_BASE, memory_mode=False)
 
-# --- 3. 运行随机策略收集数据 ---
-N_EPISODES = 20  # 磁盘读取较慢，跑20个Episode足够统计
+# --- 2. 运行随机策略收集数据 ---
+N_EPISODES = 50  # 磁盘读取较慢，跑20个Episode足够统计
 accel_data = []
 delta_w_data = []
 
@@ -69,7 +34,7 @@ for ep in range(N_EPISODES):
         done = terminated or truncated
     print(f"Episode {ep+1}/{N_EPISODES} finished.")
 
-# --- 4. 统计与可视化 ---
+# --- 3. 统计与可视化 ---
 accel_data = np.array(accel_data)
 delta_w_data = np.array(delta_w_data)
 

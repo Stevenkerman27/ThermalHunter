@@ -14,7 +14,9 @@ def run_eval(env, q_table, n_episodes=500, policy_type="trained"):
     all_rewards = []
     all_climb_heights = []
     for ep in range(n_episodes):
-        state, info = env.reset(options={"resettime": 80})
+        # 使用与训练相同的随机起始时间逻辑
+        random_reset_time = np.random.randint(config.RESET_TIME_MIN, config.RESET_TIME_MAX)
+        state, info = env.reset(options={"resettime": random_reset_time})
         h_start = info["height"]
         
         ep_reward = 0
@@ -97,7 +99,8 @@ if __name__ == "__main__":
         with open(Q_TABLE_PATH, "rb") as f:
             q_table_eval = pickle.load(f)
 
-        h5_files = sorted(glob.glob(os.path.join(config.WIND_DIR, 'snapshots_s*.h5')))
+        # 使用 config 中的自然排序
+        h5_files = sorted(glob.glob(os.path.join(config.WIND_DIR, 'snapshots_s*.h5')), key=config.natural_key)
 
         env_eval = GliderEnv(h5_file_path=h5_files, polar_file_base=POLAR_BASE)
 

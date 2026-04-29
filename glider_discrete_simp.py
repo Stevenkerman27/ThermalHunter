@@ -16,16 +16,14 @@ def trilinear(cube, dx, dy, dz):
     return c1[0] * (1 - dz) + c1[1] * dz
 
 class RBWindField:
-    def __init__(self, h5_paths, domain_size=config.DOMAIN_SIZE):
-        def natural_key(string_):
-            return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_)]
-
+    def __init__(self, h5_paths, domain_size=config.DOMAIN_SIZE, memory_mode=True):
         if isinstance(h5_paths, list):
-            self.h5_paths = sorted(h5_paths, key=natural_key) 
+            self.h5_paths = sorted(h5_paths, key=config.natural_key) 
         else:
             self.h5_paths = [h5_paths]
 
         self.domain_size = np.array(domain_size, dtype=np.float32)
+        self.memory_mode = memory_mode
         
         self.files = []
         self.dsets_list = [] 
@@ -43,10 +41,11 @@ class RBWindField:
         self._open_resources()
 
     def _open_resources(self):
-        self.all_data = [] # 用于存储读取后的内存数组
-        
         for path in self.h5_paths:
-            with h5py.File(path, 'r') as f:
+            f = h5py.File(path, 'r')
+            self.files.append(f)
+            
+            if self.memory_mode:
                 # 直接将整个数据集读取到内存中，存储为字典形式的 numpy array
                 dset_group = {
                     'ux': f['tasks/ux'][:],
@@ -54,11 +53,19 @@ class RBWindField:
                     'uz': f['tasks/uz'][:],
                     'buoyancy': f['tasks/buoyancy'][:]
                 }
-                self.dsets_list.append(dset_group)
-                
-                file_times = f['tasks/ux'].dims[0]['sim_time'][:]
-                self.all_sim_times.extend(file_times)
-                self.t_offsets.append(self.t_offsets[-1] + len(file_times))
+            else:
+                # 仅保留数据集句柄，延迟读取
+                dset_group = {
+                    'ux': f['tasks/ux'],
+                    'uy': f['tasks/uy'],
+                    'uz': f['tasks/uz'],
+                    'buoyancy': f['tasks/buoyancy']
+                }
+            self.dsets_list.append(dset_group)
+            
+            file_times = f['tasks/ux'].dims[0]['sim_time'][:]
+            self.all_sim_times.extend(file_times)
+            self.t_offsets.append(self.t_offsets[-1] + len(file_times))
         
         self.all_sim_times = np.array(self.all_sim_times)
         self.max_t_idx = len(self.all_sim_times) - 1
@@ -71,7 +78,8 @@ class RBWindField:
         self.space_range[1] = first_shape[self.y_axis]
         self.space_range[2] = first_shape[self.z_axis]
         
-        print(f"WindField initialized. dt_phy: {self.dt_phy:.4f}, Total steps: {self.max_t_idx + 1}")
+        mode_str = "Memory" if self.memory_mode else "Disk (Lazy)"
+        print(f"WindField initialized ({mode_str} mode). dt_phy: {self.dt_phy:.4f}, Total steps: {self.max_t_idx + 1}")
 
     def reset(self, t_index=0):
         self.global_t_idx = min(t_index, self.max_t_idx)
@@ -156,24 +164,29 @@ class GliderEnv(gym.Env):
     BANK_MAX_DEG = config.BANK_MAX_DEG
     BANK_STEP_DEG = config.BANK_STEP_DEG
     BANK_BINS = config.BANK_BINS
-    AOA_FIXED_DEG = config.AOA_FIXED_DEG
+    
+    AOA_MIN_DEG = config.AOA_MIN_DEG
+    AOA_MAX_DEG = config.AOA_MAX_DEG
+    AOA_STEP_DEG = config.AOA_STEP_DEG
+    AOA_BINS = config.AOA_BINS
     
     BINS_W_ACCEL = config.BINS_W_ACCEL
     BINS_DELTA_W = config.BINS_DELTA_W
     
     # String labels for external visualization scripts
     ACTION_LABELS = {
-        0: r"$\triangledown$", # Decrease bank (-5)
-        1: r"$\bullet$",          # Keep bank (0)
-        2: r"$\triangle$"       # Increase bank (+5)
+        0: "A-B-", 1: "A-B0", 2: "A-B+",
+        3: "A0B-", 4: "A0B0", 5: "A0B+",
+        6: "A+B-", 7: "A+B0", 8: "A+B+"
     }
     OBS_WIND_SYMBOLS = ["-", "0", "+"]
 
     def __init__(self, h5_file_path, polar_file_base, domain_size=config.DOMAIN_SIZE, 
                  dt_rl=config.DT_RL, n_phys_per_rl=config.N_PHYS_PER_RL, rl_steps_per_frame=config.RL_STEPS_PER_FRAME, 
-                 wind_ampf=config.WIND_AMPF, hysteresis_pct=config.HYSTERESIS_PCT, random_init=True, reward_lambda=config.REWARD_LAMBDA):
+                 wind_ampf=config.WIND_AMPF, hysteresis_pct=config.HYSTERESIS_PCT, random_init=True, 
+                 reward_lambda=config.REWARD_LAMBDA, memory_mode=True):
         super().__init__()
-        self.wind_manager = RBWindField(h5_file_path, domain_size=domain_size)
+        self.wind_manager = RBWindField(h5_file_path, domain_size=domain_size, memory_mode=memory_mode)
         self.physics = GliderPhysics(polar_file_base)
         self.domain_size = np.array(domain_size)
         self.random_init = random_init
@@ -190,8 +203,10 @@ class GliderEnv(gym.Env):
         self.rl_step_counter = 0                       # 用于追踪RL步数以更新风场
 
         # 动作与观测空间
-        self.action_space = spaces.Discrete(3)
-        self.observation_space = spaces.MultiDiscrete([self.BANK_BINS, 3, 3])
+        # Action space: 9 actions (3x3 grid for AoA and Bank deltas)
+        self.action_space = spaces.Discrete(9)
+        # Observation space: [aoa_idx, bank_idx, w_accel_bin, delta_w_bin]
+        self.observation_space = spaces.MultiDiscrete([self.AOA_BINS, self.BANK_BINS, 3, 3])
 
         self.hysteresis_pct = hysteresis_pct
         self.reward_lambda = reward_lambda
@@ -204,26 +219,31 @@ class GliderEnv(gym.Env):
         self._precompute_physics()
 
     def _precompute_physics(self):
-        """预先计算所有离散 bank 角度下的平衡物理状态"""
-        self.physics_table = np.zeros((self.BANK_BINS, 3), dtype=np.float32)
-        aoa_rad = np.deg2rad(self.AOA_FIXED_DEG)
+        """预先计算所有离散 AoA 和 bank 角度下的平衡物理状态"""
+        self.physics_table = np.zeros((self.AOA_BINS, self.BANK_BINS, 3), dtype=np.float32)
         
-        for b_idx in range(self.BANK_BINS):
-            bank_rad = np.deg2rad(self.BANK_MIN_DEG + b_idx * self.BANK_STEP_DEG)
-            v_tas, gamma, dchi_dt = self.physics.get_steady_state(aoa_rad, bank_rad)
-            self.physics_table[b_idx] = [v_tas, gamma, dchi_dt]
+        for a_idx in range(self.AOA_BINS):
+            aoa_rad = np.deg2rad(self.AOA_MIN_DEG + a_idx * self.AOA_STEP_DEG)
+            for b_idx in range(self.BANK_BINS):
+                bank_rad = np.deg2rad(self.BANK_MIN_DEG + b_idx * self.BANK_STEP_DEG)
+                v_tas, gamma, dchi_dt = self.physics.get_steady_state(aoa_rad, bank_rad)
+                self.physics_table[a_idx, b_idx] = [v_tas, gamma, dchi_dt]
         
-        print(f"Physics table pre-computed for {self.BANK_BINS} bank angles.")
+        print(f"Physics table pre-computed for {self.AOA_BINS} AoA and {self.BANK_BINS} bank angles.")
 
     def step(self, action):
-        # 0: bank -5 deg, 1: bank +0 deg, 2: bank +5 deg
-        self.bank_idx = np.clip(self.bank_idx + (action - 1), 0, self.BANK_BINS - 1)
+        # Decode action into deltas: 0-8 maps to (aoa_delta, bank_delta) in [-1, 0, 1]^2
+        aoa_delta = (action // 3) - 1
+        bank_delta = (action % 3) - 1
         
-        # 从预计算表中获取参数，避免每步进行插值和三角函数运算
-        v_tas, gamma, dchi_dt = self.physics_table[self.bank_idx]
+        self.aoa_idx = np.clip(self.aoa_idx + aoa_delta, 0, self.AOA_BINS - 1)
+        self.bank_idx = np.clip(self.bank_idx + bank_delta, 0, self.BANK_BINS - 1)
+        
+        # 从预计算表中获取参数
+        v_tas, gamma, dchi_dt = self.physics_table[self.aoa_idx, self.bank_idx]
         
         # 仅用于 info 字典的记录
-        aoa_rad = np.deg2rad(self.AOA_FIXED_DEG)
+        aoa_rad = np.deg2rad(self.AOA_MIN_DEG + self.aoa_idx * self.AOA_STEP_DEG)
         bank_rad = np.deg2rad(self.BANK_MIN_DEG + self.bank_idx * self.BANK_STEP_DEG)
 
         sum_w_accel = 0.0
@@ -314,7 +334,8 @@ class GliderEnv(gym.Env):
             init_dir = 0
         self.initial_z = z
         self.phy_state = np.array([x, y, z, init_dir])
-        self.bank_idx = 3 # Start at 0 degrees (index 3 of 0..6)
+        self.aoa_idx = self.AOA_BINS // 2   # Start at middle AoA
+        self.bank_idx = self.BANK_BINS // 2 # Start at 0 degrees bank
         self.w_accel, self.delta_w = 0.0, 0.0
         self.last_idx_az = None
         self.last_idx_dw = None
@@ -347,7 +368,7 @@ class GliderEnv(gym.Env):
         self.last_idx_az = self._apply_hysteresis(self.w_accel, self.BINS_W_ACCEL, self.last_idx_az)
         self.last_idx_dw = self._apply_hysteresis(self.delta_w, self.BINS_DELTA_W, self.last_idx_dw)
         
-        return np.array([self.bank_idx, self.last_idx_az, self.last_idx_dw], dtype=np.int32)
+        return np.array([self.aoa_idx, self.bank_idx, self.last_idx_az, self.last_idx_dw], dtype=np.int32)
     
     def close(self):
             if hasattr(self, 'wind_manager'):
