@@ -45,7 +45,7 @@ SAVE_INTERVAL = config.SAVE_INTERVAL
 q_table_shape = tuple(env.observation_space.nvec) + (env.action_space.n,)
 q_table = np.zeros(q_table_shape, dtype=np.float32)
 
-epsilon_decay_step = (EPSILON_START - EPSILON_END) / (EPISODES * 0.7)
+epsilon_decay_step = (EPSILON_START - EPSILON_END) / (EPISODES * 0.9)
 epsilon = EPSILON_START
 
 def select_action(state, epsilon):

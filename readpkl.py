@@ -14,7 +14,7 @@ print(f"成功加载 Q-table: {Q_TABLE_PATH}, shape: {q_table.shape}")
 
 # 2. 绘图配置
 # 我们将针对中间的 AoA 索引，为 7 个不同的 Bank Angle 分别绘制一个 3x3 的风场状态矩阵
-AOA_TO_PLOT = GliderEnv.AOA_BINS // 2
+AOA_TO_PLOT = 1
 aoa_deg = GliderEnv.AOA_MIN_DEG + AOA_TO_PLOT * GliderEnv.AOA_STEP_DEG
 
 fig, axes = plt.subplots(GliderEnv.BANK_BINS, 1, figsize=(10, GliderEnv.BANK_BINS), sharex=True)
@@ -44,13 +44,23 @@ for b_idx in range(GliderEnv.BANK_BINS):
 
     # 绘制动作文本/标识
     for i, action in enumerate(best_actions):
-        label = action_labels.get(action, "?")
-        # 根据动作分量决定颜色 (仅作为示例，这里逻辑可以根据需要调整)
-        # 4 是 A0B0 (保持)，颜色设为绿色
-        color = 'green' if action == 4 else 'red'
-        if "A-" in label or "B-" in label: color = 'blue'
+        full_label = action_labels.get(action, "?")
         
-        ax.text(i, 0, label, ha='center', va='center', fontsize=10, fontweight='bold', color=color)
+        # 根据动作分量决定符号和颜色 (仅基于 Bank 动作)
+        if "B0" in full_label:
+            symbol = "●"
+            color = 'green'
+        elif "B+" in full_label:
+            symbol = "▲"
+            color = 'red'
+        elif "B-" in full_label:
+            symbol = "▼"
+            color = 'blue'
+        else:
+            symbol = "?"
+            color = 'black'
+        
+        ax.text(i, 0, symbol, ha='center', va='center', fontsize=20, fontweight='bold', color=color)
 
     # 子图装饰
     ax.set_yticks([])
@@ -63,7 +73,7 @@ for b_idx in range(GliderEnv.BANK_BINS):
         ax.spines[spine].set_visible(False)
     ax.spines["bottom"].set_alpha(0.3)
 
-plt.suptitle(f"Policy Map (AoA = {aoa_deg:.1f}°)\nLabels: A(AoA) B(Bank), +/- (Inc/Dec), 0 (Keep)", fontsize=14)
+plt.suptitle(f"Policy Map (AoA = {aoa_deg:.1f}°)\nSymbols: ▲(B+), ▼(B-), ●(B0)", fontsize=14)
 # 设置最底部的 X 轴标签
 axes[-1].set_xticks(range(9))
 axes[-1].set_xticklabels(obs_labels, fontsize=12)

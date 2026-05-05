@@ -55,7 +55,7 @@ def simulate_with_env():
     uz_history = []
     reward_hst = []
     w_accels, delta_ws = [], []
-    obs_bank_idxs, obs_w_accel_idxs, obs_delta_w_idxs = [], [], [] 
+    obs_aoa_idxs, obs_bank_idxs, obs_w_accel_idxs, obs_delta_w_idxs = [], [], [], [] 
     aoa, bank = [], []
     
     max_steps = 1000
@@ -79,10 +79,11 @@ def simulate_with_env():
         aoa.append(info["control"][0])
         bank.append(info["control"][1])
         
-        # 记录离散观察值和奖励
-        obs_bank_idxs.append(obs[0])
-        obs_w_accel_idxs.append(obs[1])
-        obs_delta_w_idxs.append(obs[2])
+        # 记录离散观察值和奖励 (obs = [aoa_idx, bank_idx, w_accel_bin, delta_w_bin])
+        obs_aoa_idxs.append(obs[0])
+        obs_bank_idxs.append(obs[1])
+        obs_w_accel_idxs.append(obs[2])
+        obs_delta_w_idxs.append(obs[3])
         reward_hst.append(reward)
 
         if terminated or truncated:
@@ -97,14 +98,15 @@ def simulate_with_env():
         np.array(uz_history),
         np.array(reward_hst),
         np.array(w_accels), np.array(delta_ws), 
-        np.array(obs_bank_idxs), np.array(obs_w_accel_idxs), np.array(obs_delta_w_idxs),
+        np.array(obs_aoa_idxs), np.array(obs_bank_idxs), 
+        np.array(obs_w_accel_idxs), np.array(obs_delta_w_idxs),
         np.array(aoa), np.array(bank),
         env, CONFIG["domain_size"]
     )
     
     env.close()
 
-def _plot_all_results(history, tas, uz, reward_hst, w_accels, delta_ws, obs_bank_idxs, obs_w_accel_idxs, obs_delta_w_idxs, aoa, bank, env, domain_size):
+def _plot_all_results(history, tas, uz, reward_hst, w_accels, delta_ws, obs_aoa_idxs, obs_bank_idxs, obs_w_accel_idxs, obs_delta_w_idxs, aoa, bank, env, domain_size):
     times = np.arange(len(tas)) * env.dt_rl
 
     # --- 图 1: 3D 轨迹图 ---
@@ -128,10 +130,26 @@ def _plot_all_results(history, tas, uz, reward_hst, w_accels, delta_ws, obs_bank
     lc.set_array(uz_for_segments[valid_mask])
     
     ax3d.add_collection3d(lc)
-    fig1.colorbar(lc, ax=ax3d, label='Vertical Wind Speed(m/s)', pad=0.1)
+    cbar = fig1.colorbar(lc, ax=ax3d, label='Vertical Wind Speed(m/s)', pad=0.1,shrink=0.6, aspect=10)
+    cbar.ax.tick_params(labelsize=14) # 刻度大小
+    cbar.set_label('Vertical Wind Speed(m/s)', fontsize=16) # 标题大小
+
+    start_pt = history[0]
+    end_pt = history[-1]
+    
+    # 1. 标记起点 (绿色圆点)
+    ax3d.scatter(start_pt[0], start_pt[1], start_pt[2], 
+                 color='green', s=60, marker='o', edgecolors='black', zorder=5)
+    ax3d.text(start_pt[0], start_pt[1], start_pt[2], "  Start", 
+              color='green', fontsize=12, fontweight='bold')
+
+    # 2. 标记终点 (红色方块)
+    ax3d.scatter(end_pt[0], end_pt[1], end_pt[2], 
+                 color='red', s=60, marker='s', edgecolors='black', zorder=5)
+    ax3d.text(end_pt[0], end_pt[1], end_pt[2], "  End", 
+              color='red', fontsize=12, fontweight='bold')
     
     ax3d.set_xlim(0, domain_size[0]); ax3d.set_ylim(0, domain_size[1]); ax3d.set_zlim(0, domain_size[2])
-    ax3d.set_title('Glider Trajectory (Colored by TAS)')
 
     # --- 图 2: 特征分析图 ---
     fig2, axes = plt.subplots(5, 1, figsize=(12, 8), sharex=True)

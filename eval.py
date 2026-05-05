@@ -73,7 +73,7 @@ def plot_climb_results(rnd_climbs, exp_climbs, save_path="trainresult/climb_eval
         plt.text(i, y_pos, text_str, ha='center', va='bottom', 
                  fontsize=16, fontweight='bold', color=my_colors[p])
         
-    plt.tick_params(axis='both', which='major', labelsize=14)
+    plt.tick_params(axis='both', which='major', labelsize=16)
     plt.gca().spines['top'].set_visible(False)
     plt.gca().spines['right'].set_visible(False)
     plt.ylabel("Episodic Climb Height (m)", fontsize=20)

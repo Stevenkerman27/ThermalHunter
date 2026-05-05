@@ -140,11 +140,12 @@ class GliderPhysics:
             "Cd": interp1d(df['AoA'], df['CDtot'], kind='linear', fill_value="extrapolate")
         }
 
-    def get_steady_state(self, alpha_rad, bank_rad):
+    def get_steady_state(self, alpha_rad, bank_rad, drag_mult=1.0):
         cl = float(self.aero_interp['Cl'](np.degrees(alpha_rad)))
-        cd = float(self.aero_interp['Cd'](np.degrees(alpha_rad)))
-        
+        cd = float(self.aero_interp['Cd'](np.degrees(alpha_rad))) * drag_mult
+
         # 1. 计算平衡下滑角 gamma: tan(gamma) = CD / (CL * cos(mu))
+
         tan_gamma = cd / (cl * np.cos(bank_rad))
         gamma_rad = np.arctan(tan_gamma)
         
@@ -219,28 +220,41 @@ class GliderEnv(gym.Env):
         self._precompute_physics()
 
     def _precompute_physics(self):
-        """预先计算所有离散 AoA 和 bank 角度下的平衡物理状态"""
+        """预先计算所有离散 AoA 和 bank 角度下的平衡物理状态 (包括正常与高阻力状态)"""
         self.physics_table = np.zeros((self.AOA_BINS, self.BANK_BINS, 3), dtype=np.float32)
+        self.physics_table_drag = np.zeros((self.AOA_BINS, self.BANK_BINS, 3), dtype=np.float32)
         
         for a_idx in range(self.AOA_BINS):
             aoa_rad = np.deg2rad(self.AOA_MIN_DEG + a_idx * self.AOA_STEP_DEG)
             for b_idx in range(self.BANK_BINS):
                 bank_rad = np.deg2rad(self.BANK_MIN_DEG + b_idx * self.BANK_STEP_DEG)
+                
+                # 正常状态
                 v_tas, gamma, dchi_dt = self.physics.get_steady_state(aoa_rad, bank_rad)
                 self.physics_table[a_idx, b_idx] = [v_tas, gamma, dchi_dt]
+                
+                # 操纵面产生的额外阻力状态
+                v_tas_d, gamma_d, dchi_dt_d = self.physics.get_steady_state(aoa_rad, bank_rad, drag_mult=config.CONTROL_DRAG_MULTIPLIER)
+                self.physics_table_drag[a_idx, b_idx] = [v_tas_d, gamma_d, dchi_dt_d]
         
-        print(f"Physics table pre-computed for {self.AOA_BINS} AoA and {self.BANK_BINS} bank angles.")
+        print(f"Physics tables pre-computed (Normal & Drag-Penalty) for {self.AOA_BINS} AoA and {self.BANK_BINS} bank angles.")
 
     def step(self, action):
         # Decode action into deltas: 0-8 maps to (aoa_delta, bank_delta) in [-1, 0, 1]^2
         aoa_delta = (action // 3) - 1
         bank_delta = (action % 3) - 1
         
+        # 记录是否发生了控制改变
+        control_changed = (aoa_delta != 0) or (bank_delta != 0)
+
         self.aoa_idx = np.clip(self.aoa_idx + aoa_delta, 0, self.AOA_BINS - 1)
         self.bank_idx = np.clip(self.bank_idx + bank_delta, 0, self.BANK_BINS - 1)
         
         # 从预计算表中获取参数
-        v_tas, gamma, dchi_dt = self.physics_table[self.aoa_idx, self.bank_idx]
+        if control_changed:
+            v_tas, gamma, dchi_dt = self.physics_table_drag[self.aoa_idx, self.bank_idx]
+        else:
+            v_tas, gamma, dchi_dt = self.physics_table[self.aoa_idx, self.bank_idx]
         
         # 仅用于 info 字典的记录
         aoa_rad = np.deg2rad(self.AOA_MIN_DEG + self.aoa_idx * self.AOA_STEP_DEG)
@@ -306,10 +320,6 @@ class GliderEnv(gym.Env):
         current_uz = self.wind_manager.get_wind(*self.phy_state[:3])[2] * self.wind_ampf
         height_change = self.phy_state[2] - z_old
         reward = current_uz + 5* self.w_accel + self.reward_survive + height_change * self.reward_lambda
-
-        if terminated:
-            # 仅在真正结束（撞地或飞出）时给予高度奖惩
-            reward += (self.phy_state[2]-self.initial_z)
 
         info = {
             "w_accel": self.w_accel, 

@@ -1,6 +1,8 @@
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.animation as animation
+import imageio
 import os
 import glob
 from glider_discrete_simp import RBWindField
@@ -16,6 +18,8 @@ FRAME_SKIP = 1
 FPS = 5
 # 输出文件名
 OUTPUT_GIF = "convective_plumes_xz.gif"
+
+plt.rcParams.update({'font.size': 16})
 
 
 # =========================================
@@ -55,7 +59,7 @@ def render_gif():
     print("正在初始化风场数据...")
     try:
         # 我们只需要网格形状和时间信息，domain_size 在这里不影响原始数据读取
-        wf = RBWindField(h5_files, domain_size=DOMAIN_SIZE_PHYSICAL)
+        wf = RBWindField(h5_files, domain_size=DOMAIN_SIZE_PHYSICAL, memory_mode=False)
     except Exception as e:
         print(f"初始化失败: {e}")
         return
@@ -88,19 +92,19 @@ def render_gif():
     
     # 添加颜色条
     cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label('Vertical Velocity $u_z$ (Red=Up, Blue=Down)')
+    cbar.set_label('Vertical Wind Velocity')
 
     # 设置标签
-    ax.set_xlabel('X Position (Physical Units)')
-    ax.set_ylabel('Z Position (Height)')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Z')
     title_text = ax.set_title('')
 
     start_frame = 0   
     frames_to_render = range(start_frame, total_steps, FRAME_SKIP)
     print(f"预计渲染帧数: {len(frames_to_render)}")
 
-    # --- 动画更新函数 ---
-    def update(frame_t_idx):
+    # --- 动画更新逻辑 (手动循环以节省内存) ---
+    def get_frame(frame_t_idx):
         # 1. 获取原始切片数据 (Shape: X, Z)
         slice_raw = find_raw_data_slice(wf, frame_t_idx, y_slice_idx)
         
@@ -112,17 +116,24 @@ def render_gif():
         
         # 4. 更新标题 (显示物理时间)
         sim_time = wf.all_sim_times[frame_t_idx]
-        title_text.set_text(f'XZ Slice Convection - Global T: {frame_t_idx} | Sim Time: {sim_time:.2f}')
+        title_text.set_text(f'Frame: {frame_t_idx} | Time: {sim_time:.2f}')
         
-        return im, title_text
+        fig.canvas.draw()
+        # 更加稳健的转换方式
+        image = np.frombuffer(fig.canvas.buffer_rgba(), dtype='uint8')
+        image = image.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+        return image[:, :, :3] # 去掉 Alpha 通道
 
     # --- 创建并保存动画 ---
     print(f"开始渲染 GIF 到 {OUTPUT_GIF} (可能需要几分钟)...")
-    ani = animation.FuncAnimation(fig, update, frames=frames_to_render, blit=True)
-    
-    # 使用 Pillow writer 保存 (无需额外安装 ImageMagick)
     try:
-        ani.save(OUTPUT_GIF, writer='pillow', fps=FPS, dpi=200)
+        # 使用 imageio 串流写入 GIF
+        with imageio.get_writer(OUTPUT_GIF, mode='I', duration=1000/FPS, loop=0) as writer:
+            for i, frame_t_idx in enumerate(frames_to_render):
+                frame_image = get_frame(frame_t_idx)
+                writer.append_data(frame_image)
+                if (i + 1) % 10 == 0:
+                    print(f"已处理 {i + 1} / {len(frames_to_render)} 帧...")
         print("渲染完成！")
     except Exception as e:
         print(f"保存 GIF 失败: {e}")
