@@ -185,12 +185,13 @@ class GliderEnv(gym.Env):
     def __init__(self, h5_file_path, polar_file_base, domain_size=config.DOMAIN_SIZE, 
                  dt_rl=config.DT_RL, n_phys_per_rl=config.N_PHYS_PER_RL, rl_steps_per_frame=config.RL_STEPS_PER_FRAME, 
                  wind_ampf=config.WIND_AMPF, hysteresis_pct=config.HYSTERESIS_PCT, random_init=True, 
-                 reward_lambda=config.REWARD_LAMBDA, memory_mode=True):
+                 reward_lambda=config.REWARD_LAMBDA, memory_mode=True, continuous_obs=False):
         super().__init__()
         self.wind_manager = RBWindField(h5_file_path, domain_size=domain_size, memory_mode=memory_mode)
         self.physics = GliderPhysics(polar_file_base)
         self.domain_size = np.array(domain_size)
         self.random_init = random_init
+        self.continuous_obs = continuous_obs
         
         # 时间控制参数
         self.dt_rl = dt_rl                             # RL步长 (秒)
@@ -206,8 +207,15 @@ class GliderEnv(gym.Env):
         # 动作与观测空间
         # Action space: 9 actions (3x3 grid for AoA and Bank deltas)
         self.action_space = spaces.Discrete(9)
-        # Observation space: [aoa_idx, bank_idx, w_accel_bin, delta_w_bin]
-        self.observation_space = spaces.MultiDiscrete([self.AOA_BINS, self.BANK_BINS, 3, 3])
+        # Observation space
+        if self.continuous_obs:
+            # [aoa_idx, bank_idx, w_accel, delta_w]
+            # Use +/- 10.0 for sensor values as broad limits; DQN handles raw values better with normalization anyway
+            low = np.array([0, 0, -10.0, -10.0], dtype=np.float32)
+            high = np.array([self.AOA_BINS - 1, self.BANK_BINS - 1, 10.0, 10.0], dtype=np.float32)
+            self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
+        else:
+            self.observation_space = spaces.MultiDiscrete([self.AOA_BINS, self.BANK_BINS, 3, 3])
 
         self.hysteresis_pct = hysteresis_pct
         self.reward_lambda = reward_lambda
@@ -374,6 +382,9 @@ class GliderEnv(gym.Env):
             return new_idx if value < threshold - margin else last_idx
 
     def _get_obs(self):
+        if self.continuous_obs:
+            return np.array([self.aoa_idx, self.bank_idx, self.w_accel, self.delta_w], dtype=np.float32)
+
         # 分别计算带迟滞的索引
         self.last_idx_az = self._apply_hysteresis(self.w_accel, self.BINS_W_ACCEL, self.last_idx_az)
         self.last_idx_dw = self._apply_hysteresis(self.delta_w, self.BINS_DELTA_W, self.last_idx_dw)

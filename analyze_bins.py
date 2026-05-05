@@ -5,6 +5,7 @@ from glider_discrete_simp import GliderEnv
 import os
 import glob
 import config
+import json
 
 # --- 1. 配置环境 ---
 h5_files = sorted(glob.glob(os.path.join(config.WIND_DIR, 'snapshots_s*.h5')))
@@ -17,7 +18,7 @@ if not h5_files:
 env = GliderEnv(h5_file_path=h5_files, polar_file_base=config.POLAR_BASE, memory_mode=False)
 
 # --- 2. 运行随机策略收集数据 ---
-N_EPISODES = 50  # 磁盘读取较慢，跑20个Episode足够统计
+N_EPISODES = 50  # 磁盘读取较慢，跑50个Episode足够统计
 accel_data = []
 delta_w_data = []
 
@@ -37,6 +38,23 @@ for ep in range(N_EPISODES):
 # --- 3. 统计与可视化 ---
 accel_data = np.array(accel_data)
 delta_w_data = np.array(delta_w_data)
+
+stats = {
+    "w_accel": {
+        "mean": float(np.mean(accel_data)),
+        "std": float(np.std(accel_data))
+    },
+    "delta_w": {
+        "mean": float(np.mean(delta_w_data)),
+        "std": float(np.std(delta_w_data))
+    }
+}
+
+# 保存统计数据到 JSON
+stats_path = os.path.join(config.BASE_DIR, "sensor_stats.json")
+with open(stats_path, "w") as f:
+    json.dump(stats, f, indent=4)
+print(f"统计数据已保存至 {stats_path}")
 
 def print_stats(name, data):
     print(f"\n--- {name} 统计结果 ---")

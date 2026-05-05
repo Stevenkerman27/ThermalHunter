@@ -82,6 +82,20 @@ SAVE_INTERVAL = 2000      # 模型保存间隔
 Q_TABLE_NAME = "q_table_v0.pkl"
 SAVE_PATH = os.path.join(Q_TABLE_DIR, Q_TABLE_NAME)
 
+# ==========================================
+# 训练参数 (Training - DQN)
+# ==========================================
+DQN_LR = 1e-4
+DQN_GAMMA = 0.99
+DQN_BATCH_SIZE = 32
+DQN_BUFFER_SIZE = 100000
+DQN_TARGET_UPDATE_INTERVAL = 10
+DQN_HIDDEN_SIZE = 32
+DQN_SAVE_PATH = os.path.join(Q_TABLE_DIR, "dqn_model.pth")
+DQN_EPSILON_START = 1.0
+DQN_EPSILON_END = 0.05
+DQN_EPISODES = 1500
+
 # 追踪特定的 Q 值索引 (s_aoa, s_bank, s_accel, s_delta, action)
 TRACK_INDICES = [(2, 3, 1, 1, 4), (2, 3, 2, 2, 0), (2, 3, 0, 0, 8)]
 
