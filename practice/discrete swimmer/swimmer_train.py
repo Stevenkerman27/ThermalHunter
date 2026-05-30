@@ -16,22 +16,22 @@ register(
 
 # =================配置参数=================
 GRID_SIZE = 25
-NUM_EPISODES = 6000       # 训练总局数
-LEARNING_RATE = 0.02
+NUM_EPISODES = 40       # 训练总局数
+LEARNING_RATE = 0.01
 GAMMA = 0.1
-EPSILON_START = 1.0
-EPSILON_END = 0.6
-sessions = 1000
+EPSILON_START = 0.1
+EPSILON_END = 0.01
+SAVE_FREQ = 4
+Q_INIT_VALUE = 10
 
 # =================主程序=================
 if __name__ == "__main__":
     # 创建训练环境
     env = gym.make("GridSwimmer-v0", grid_size=GRID_SIZE)
-    obs_dim = GRID_SIZE
     
-    # Q-Table 形状: (dx, dy, action)
-    q_table_shape = (obs_dim, obs_dim, env.action_space.n)
-    q_table = np.zeros(q_table_shape)
+    # Q-Table 形状: (is_up, is_down, is_left, is_right, action)
+    q_table_shape = (2, 2, 2, 2, env.action_space.n)
+    q_table = np.full(q_table_shape, Q_INIT_VALUE)
     
     # 线性衰减设置
     epsilon_decay_step = (EPSILON_START - EPSILON_END) / int(NUM_EPISODES)
@@ -83,6 +83,13 @@ if __name__ == "__main__":
         if epsilon > EPSILON_END:
             epsilon -= epsilon_decay_step
         
+        # --- 定期保存 Q-Table ---
+        save_interval = NUM_EPISODES // SAVE_FREQ
+        if episode % save_interval == 0:
+            save_path = f"practice/discrete swimmer/q_table_E{episode}.npy"
+            np.save(save_path, q_table)
+            print(f"定期保存模型: {save_path}")
+
         if (episode + 1) % 100 == 0:
             avg_reward = np.mean(rewards_history[-100:])
             print(f"Episode {episode+1} | Epsilon: {epsilon:.2f} | Avg Reward: {avg_reward:.2f}")
@@ -90,32 +97,46 @@ if __name__ == "__main__":
     print("训练完成！")
 
     # === 绘图代码 ===
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(13, 6))
     data = np.array(metrics)
     
     # 1. 设置基准线 (1.0 代表完美表现)
     plt.axhline(y=1.0, color='r', linestyle='--', label='Optimal (1.0)')
 
-    # 2. 绘制原始数据（调高透明度，作为背景噪点）
-    plt.plot(data, color='gray', alpha=0.2, label='Raw Metrics')
+    # 绘制保存点的竖线
+    save_interval = NUM_EPISODES // SAVE_FREQ
+    for i in range(SAVE_FREQ + 1):
+        cp_episode = i * save_interval
+        if cp_episode <= NUM_EPISODES:
+            plt.axvline(x=cp_episode, color='black', linestyle=':', alpha=0.8, 
+                        label='Checkpoint' if i == 0 else "")
 
-    # 3. 绘制平滑曲线（核心）
-    window_size = int(0.01*episode)  # 窗口大小
-    if len(data) >= window_size:
-        # 使用卷积计算滑动平均
+    # 2. 计算平滑参数
+    window_size = max(1, int(0.01 * len(data)))
+    do_smooth = len(data) >= window_size and window_size > 1
+
+    # 3. 绘制原始数据
+    if do_smooth:
+        plt.plot(data, color='gray', alpha=0.2, label='Raw Metrics')
+        # 绘制平滑曲线（核心）
         smooth_data = np.convolve(data, np.ones(window_size)/window_size, mode='valid')
-        # 对齐X轴
         x_smooth = np.arange(window_size, len(data) + 1)
         plt.plot(x_smooth, smooth_data, color='blue', linewidth=2, label='Smoothed Metrics')
-
-
-    plt.xlabel("Episode", fontsize=18)
-    plt.ylabel("Metrics", fontsize=18)
-    plt.ylim(bottom=min(smooth_data), top=1.2) # 限制Y轴视野
+        plt.ylim(bottom=min(smooth_data) * 0.9, top=1.2)
+    else:
+        # 如果不平滑，加深原始数据的颜色
+        plt.plot(data, color='blue', alpha=0.6, label='Raw Metrics')
+        plt.ylim(bottom=min(data) * 0.9, top=1.2)
     plt.legend(loc='lower right', fontsize=18)
     plt.tick_params(axis='both', labelsize=16)
     plt.grid(True)
     plt.tight_layout() # 自动调整布局
+    
+    # 保存训练结果图
+    train_plot_path = "practice/discrete swimmer/train_metrics.png"
+    plt.savefig(train_plot_path, dpi=150)
+    print(f"训练结果图已保存至: {train_plot_path}")
+    
     plt.show()
 
 
@@ -125,8 +146,10 @@ if __name__ == "__main__":
     
 
     # === 保存 Q-Table 到文件 ===
+    final_save_path = f"practice/discrete swimmer/q_table_E{NUM_EPISODES}.npy"
+    np.save(final_save_path, q_table)
     np.save("practice/discrete swimmer/my_q_table.npy", q_table)
-    print("模型已保存为 my_q_table.npy")
+    print(f"训练结束，模型已保存为: {final_save_path} 和 my_q_table.npy")
     
     # =================测试演示=================
     print("\n开始演示...")
@@ -144,4 +167,5 @@ if __name__ == "__main__":
             state = tuple(obs)
             done = terminated or truncated
             
+    test_env.close()        
     test_env.close()

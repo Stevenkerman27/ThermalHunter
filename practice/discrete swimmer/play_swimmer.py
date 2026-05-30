@@ -85,7 +85,7 @@ def save_as_gif(filename="swimmer_demo.gif", num_episodes=1):
 
 def visualize_trajectories(filename="practice/discrete swimmer/swimmer_trajectories.png", num_episodes=10):
     env = gym.make("GridSwimmer-v0", grid_size=GRID_SIZE)
-    fig, ax = plt.subplots(figsize=(8, 8))
+    fig, ax = plt.subplots(figsize=(10, 10)) # 稍微增大画布以容纳大字体
 
     # 设置坐标轴
     ax.set_xlim(0, GRID_SIZE)
@@ -94,6 +94,7 @@ def visualize_trajectories(filename="practice/discrete swimmer/swimmer_trajector
     # 主要刻度每5个一个标签
     ax.set_xticks(np.arange(0, GRID_SIZE + 1, 5))
     ax.set_yticks(np.arange(0, GRID_SIZE + 1, 5))
+    ax.tick_params(axis='both', which='major', labelsize=20)
     
     # 次要刻度每个格一个，用于画细网格线
     ax.set_xticks(np.arange(0, GRID_SIZE + 1, 1), minor=True)
@@ -138,7 +139,6 @@ def visualize_trajectories(filename="practice/discrete swimmer/swimmer_trajector
         ax.scatter(start_pos[0] + 0.5, start_pos[1] + 0.5, color=color, marker='o', s=100, edgecolors='black', label=f'Ep {i+1} Start' if i < 3 else "")
         ax.scatter(target_pos[0] + 0.5, target_pos[1] + 0.5, color=color, marker='x', s=100, linewidths=3, label=f'Ep {i+1} Target' if i < 3 else "")
 
-    plt.title(f"Trajectories of {num_episodes} Episodes")
     # plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.savefig(filename, bbox_inches='tight')
     print(f"Trajectories saved to {filename}")

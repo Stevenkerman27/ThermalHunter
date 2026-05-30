@@ -7,7 +7,7 @@ import os
 import re
 import pickle
 import time
-from eval import run_eval, plot_climb_results
+from eval_all import run_eval, plot_climb_results
 import config
 
 # --- 环境注册 ---

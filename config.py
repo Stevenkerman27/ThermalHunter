@@ -68,7 +68,7 @@ RL_STEPS_PER_FRAME = 2    # 多少步 RL 更新一次风场数据帧
 WIND_AMPF = 12.0          # 风场放大系数
 REWARD_LAMBDA = 0.2       # 高度变化奖励权重
 REWARD_SURVIVE = 0.0      # 每步生存奖励
-CONTROL_DRAG_MULTIPLIER = 1.1 # 操纵面额外阻力系数 (当 AoA 或 Bank 改变时)
+CONTROL_DRAG_MULTIPLIER = 1.2 # 操纵面额外阻力系数 (当 AoA 或 Bank 改变时)
 
 # ==========================================
 # 训练参数 (Training - Q-Learning)
@@ -94,7 +94,9 @@ DQN_HIDDEN_SIZE = 32
 DQN_SAVE_PATH = os.path.join(Q_TABLE_DIR, "dqn_model.pth")
 DQN_EPSILON_START = 1.0
 DQN_EPSILON_END = 0.05
-DQN_EPISODES = 1500
+DQN_EPISODES = 3000
+DQN_ACTION_MARGIN_K = 0.1  # 动态阈值系数
+DQN_ACTION_MARGIN_MIN = 0.02 # 固定最小阈值
 
 # 追踪特定的 Q 值索引 (s_aoa, s_bank, s_accel, s_delta, action)
 TRACK_INDICES = [(2, 3, 1, 1, 4), (2, 3, 2, 2, 0), (2, 3, 0, 0, 8)]
@@ -102,4 +104,4 @@ TRACK_INDICES = [(2, 3, 1, 1, 4), (2, 3, 2, 2, 0), (2, 3, 0, 0, 8)]
 # ==========================================
 # 评估参数 (Evaluation)
 # ==========================================
-N_EVAL_EPISODES = 300     # 评估时的集数
+N_EVAL_EPISODES = 500     # 评估时的集数

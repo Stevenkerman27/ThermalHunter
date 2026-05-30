@@ -13,7 +13,6 @@ import json
 import matplotlib.pyplot as plt
 from collections import deque
 import config
-from eval import plot_climb_results
 
 # --- Environment Registration ---
 try:

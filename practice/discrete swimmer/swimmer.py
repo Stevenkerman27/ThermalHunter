@@ -21,8 +21,7 @@ class GridSwimmerEnv(gym.Env):
         # 0: 上, 1: 右, 2: 下, 3: 左
         self.action_space = spaces.Discrete(4)
 
-        self.obs_range = grid_size
-        self.observation_space = spaces.MultiDiscrete([self.obs_range, self.obs_range])
+        self.observation_space = spaces.MultiBinary(4)
 
         # 动作对应的坐标变化 (dx, dy)
         # 假设 (0,0) 在左下角 -> Up 是 y+1
@@ -61,12 +60,15 @@ class GridSwimmerEnv(gym.Env):
         return np.abs(delta).sum()
     
     def _get_obs(self):
-        # 获取最短向量 (例如 -1, 0)
         delta = self._get_toroidal_delta(self._agent_pos, self._target_pos)
+        dx, dy = delta[0], delta[1]
         
-        # 加上 Offset 变成 Q-Table 索引 (例如 11, 12)
-        offset = self.grid_size // 2
-        return (delta + offset).astype(int)
+        is_up = 1 if dy > 0 else 0
+        is_down = 1 if dy < 0 else 0
+        is_left = 1 if dx < 0 else 0
+        is_right = 1 if dx > 0 else 0
+        
+        return np.array([is_up, is_down, is_left, is_right], dtype=np.int8)
 
     def _get_info(self):
         # 计算曼哈顿距离 (Manhattan Distance) 作为理论最短距离

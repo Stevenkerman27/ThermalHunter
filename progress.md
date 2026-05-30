@@ -1,7 +1,7 @@
 # 项目架构
 simulator.py为可视化滑翔机轨迹的模拟器
-eval.py批量评估随机和训练后策略的性能 (已模块化，支持在训练脚本中直接调用)
-plot_wing.py绘制风场切片的gif图
+eval_all.py 统一评估脚本，支持并行模拟 Random、Tabular 和 DQN 策略，并包含所有绘图逻辑。
+plot_wing.py 绘制风场切片的 gif 图
 readpkl.py读取训练的策略并绘图
 make_pkl.py制作理想策略
 test_wind_reading.py为测试风场数据的代码
@@ -13,4 +13,5 @@ glider_train.py为训练代码 (集成自动评估功能)
 2. 状态空间：BANK_BINS=7, W_ACCEL=3, DELTA_W=3。
 3. 训练速度：不使用多线程时，通过减少 Python 解释器开销可达到 ~5000 steps/s。
 4. 奖励函数：采用混合稠密奖励 `reward = current_uz + 5*w_accel + (dz * lambda)`。其中 `dz * lambda` 为每步高度变化奖励，用于解决长序列中的信用分配(Credit Assignment)问题。
-6. 操纵面阻力模拟：为了真实反映频繁改变姿态的代价，引入 `CONTROL_DRAG_MULTIPLIER` (默认1.1)。当 Agent 改变 AoA 或 Bank 索引时，该步物理积分使用 `physics_table_drag` (Cd 放大 1.1x 后的平衡态)，模拟控制面偏转产生的额外诱导阻力。
+6. 评估并行化：`eval_all.py` 通过 `MultiGliderEvaluator` 实现了在同一风场 realization 下并行推进多个不同策略的 gliders，共享风场步进开销，大幅提升评估速度。
+7. 操纵面阻力模拟：为了真实反映频繁改变姿态的代价，引入 `CONTROL_DRAG_MULTIPLIER` (默认1.1)。当 Agent 改变 AoA 或 Bank 索引时，该步物理积分使用 `physics_table_drag` (Cd 放大 1.1x 后的平衡态)，模拟控制面偏转产生的额外诱导阻力。

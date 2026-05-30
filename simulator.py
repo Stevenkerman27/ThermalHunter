@@ -57,7 +57,16 @@ def simulate_with_env():
             q_table = pickle.load(f)
         print(f"成功加载 Q-table: {TABULAR_PATH}")
         def tabular_policy(obs):
-            return np.argmax(q_table[tuple(obs)])
+            q_values = q_table[tuple(obs)]
+            best_action = np.argmax(q_values)
+            
+            # Hysteresis: Only switch from HOLD (4) if best Q is significantly better
+            if best_action != 4:
+                q_range = np.max(q_values) - np.min(q_values)
+                threshold = max(config.DQN_ACTION_MARGIN_MIN, config.DQN_ACTION_MARGIN_K * q_range)
+                if q_values[best_action] < q_values[4] + threshold:
+                    return 4
+            return best_action
         policy_fn = tabular_policy
     else:
         if not os.path.exists(DQN_PATH):
@@ -73,7 +82,16 @@ def simulate_with_env():
             s_norm = normalize_state(obs)
             state_t = torch.FloatTensor(s_norm).unsqueeze(0).to(device)
             with torch.no_grad():
-                return model(state_t).argmax().item()
+                q_values = model(state_t).squeeze()
+                best_action = q_values.argmax().item()
+                
+                # Hysteresis logic
+                if best_action != 4:
+                    q_range = q_values.max() - q_values.min()
+                    threshold = max(config.DQN_ACTION_MARGIN_MIN, config.DQN_ACTION_MARGIN_K * q_range)
+                    if q_values[best_action] < q_values[4] + threshold:
+                        return 4
+                return best_action
         policy_fn = dqn_policy
 
     obs, info = env.reset(options={"resettime": 80})
