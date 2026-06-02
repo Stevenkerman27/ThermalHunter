@@ -218,11 +218,17 @@ if __name__ == "__main__":
     start_time = time.time()
 
     recent_returns = []
-    recent_heights = []
+    recent_climbs = []
+    # Track initial height for each env to calculate net climb
+    episode_start_heights = np.zeros(envs.num_envs)
 
     # TRY NOT TO MODIFY: start the game
-    obs, _ = envs.reset(seed=args.seed)
+    obs, infos = envs.reset(seed=args.seed)
+    episode_start_heights = infos["height"].copy()
     for global_step in range(args.total_timesteps):
+        # Capture current height before step to use as final_height if episode ends
+        prev_heights = infos["height"].copy()
+        
         # ALGO LOGIC: put action logic here
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
         if random.random() < epsilon:
@@ -238,19 +244,25 @@ if __name__ == "__main__":
         if "_episode" in infos:
             for idx, d in enumerate(infos["_episode"]):
                 if d:
+                    # Calculate net climb using height before reset
+                    final_height = prev_heights[idx]
+                    net_climb = final_height - episode_start_heights[idx]
                     recent_returns.append(infos["episode"]["r"][idx])
-                    recent_heights.append(infos["height"][idx])
+                    recent_climbs.append(net_climb)
 
                     writer.add_scalar("charts/episodic_return", infos["episode"]["r"][idx], global_step)
                     writer.add_scalar("charts/episodic_length", infos["episode"]["l"][idx], global_step)
-                    writer.add_scalar("charts/final_height", infos["height"][idx], global_step)
+                    writer.add_scalar("charts/net_climb", net_climb, global_step)
 
-                    if len(recent_heights) >= 10:
+                    if len(recent_climbs) >= 10:
                         avg_return = np.mean(recent_returns)
-                        avg_height = np.mean(recent_heights)
-                        print(f"global_step={global_step}, avg_return (last 10 eps)={avg_return:.2f}, avg_height={avg_height:.1f}")
+                        avg_climb = np.mean(recent_climbs)
+                        print(f"global_step={global_step}, avg_return (last 10 eps)={avg_return:.2f}, avg_climb={avg_climb:.1f}")
                         recent_returns.clear()
-                        recent_heights.clear()
+                        recent_climbs.clear()
+                    
+                    # Update initial height for the NEXT episode in this env
+                    episode_start_heights[idx] = infos["height"][idx]
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
