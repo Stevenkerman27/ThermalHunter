@@ -35,6 +35,20 @@ try:
 except Exception:
     pass 
 
+def normalize_state(state, sensor_stats=None):
+    s = state.copy().astype(np.float32)
+    # aoa_idx, bank_idx normalization to ~[-1, 1]
+    s[0] = (s[0] - (config.AOA_BINS / 2)) / (config.AOA_BINS / 2)
+    s[1] = (s[1] - (config.BANK_BINS / 2)) / (config.BANK_BINS / 2)
+    
+    if sensor_stats:
+        s[2] = (s[2] - sensor_stats["w_accel"]["mean"]) / sensor_stats["w_accel"]["std"]
+        s[3] = (s[3] - sensor_stats["delta_w"]["mean"]) / sensor_stats["delta_w"]["std"]
+    else:
+        s[2] *= 2.0 
+        s[3] *= 5.0
+    return s
+
 class GliderWrapper(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
@@ -51,20 +65,6 @@ class GliderWrapper(gym.Wrapper):
         high = np.array([2.0, 2.0, 10.0, 10.0], dtype=np.float32)
         self.observation_space = gym.spaces.Box(low=low, high=high, dtype=np.float32)
 
-    def normalize_state(self, state):
-        s = state.copy().astype(np.float32)
-        # aoa_idx, bank_idx normalization to ~[-1, 1]
-        s[0] = (s[0] - (config.AOA_BINS / 2)) / (config.AOA_BINS / 2)
-        s[1] = (s[1] - (config.BANK_BINS / 2)) / (config.BANK_BINS / 2)
-        
-        if self.sensor_stats:
-            s[2] = (s[2] - self.sensor_stats["w_accel"]["mean"]) / self.sensor_stats["w_accel"]["std"]
-            s[3] = (s[3] - self.sensor_stats["delta_w"]["mean"]) / self.sensor_stats["delta_w"]["std"]
-        else:
-            s[2] *= 2.0 
-            s[3] *= 5.0
-        return s
-
     def reset(self, **kwargs):
         if kwargs.get("options") is None:
             kwargs["options"] = {}
@@ -72,11 +72,11 @@ class GliderWrapper(gym.Wrapper):
         if "resettime" not in kwargs["options"]:
             kwargs["options"]["resettime"] = np.random.randint(config.RESET_TIME_MIN, config.RESET_TIME_MAX)
         obs, info = self.env.reset(**kwargs)
-        return self.normalize_state(obs), info
+        return normalize_state(obs, self.sensor_stats), info
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
-        return self.normalize_state(obs), reward, terminated, truncated, info
+        return normalize_state(obs, self.sensor_stats), reward, terminated, truncated, info
 
 @dataclass
 class Args:
@@ -106,7 +106,7 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "GliderContinuous-v0"
     """the id of the environment"""
-    total_timesteps: int = 600000
+    total_timesteps: int = config.DQN_TOTAL_TIMESTEPS
     """total timesteps of the experiments"""
     learning_rate: float = config.DQN_LR
     """the learning rate of the optimizer"""
@@ -116,9 +116,9 @@ class Args:
     """the replay memory buffer size"""
     gamma: float = config.DQN_GAMMA
     """the discount factor gamma"""
-    tau: float = 1.0
+    tau: float = config.DQN_TAU
     """the target network update rate"""
-    target_network_frequency: int = 2000
+    target_network_frequency: int = config.DQN_TARGET_FREQ
     """the timesteps it takes to update the target network"""
     batch_size: int = config.DQN_BATCH_SIZE
     """the batch size of sample from the reply memory"""
@@ -126,11 +126,11 @@ class Args:
     """the starting epsilon for exploration"""
     end_e: float = config.DQN_EPSILON_END
     """the ending epsilon for exploration"""
-    exploration_fraction: float = 0.5
+    exploration_fraction: float = config.DQN_EXPLORATION_FRACTION
     """the fraction of `total-timesteps` it takes from start-e to go end-e"""
-    learning_starts: int = 2000
+    learning_starts: int = config.DQN_LEARNING_STARTS
     """timestep to start learning"""
-    train_frequency: int = 4
+    train_frequency: int = config.DQN_TRAIN_FREQ
     """the frequency of training"""
 
 
@@ -149,14 +149,14 @@ def make_env(env_id, seed, idx, capture_video, run_name, memory_mode=True):
 
 # ALGO LOGIC: initialize agent here:
 class QNetwork(nn.Module):
-    def __init__(self, env):
+    def __init__(self, observation_shape, action_count):
         super().__init__()
         self.network = nn.Sequential(
-            nn.Linear(np.array(env.single_observation_space.shape).prod(), 120),
+            nn.Linear(np.array(observation_shape).prod(), 120),
             nn.ReLU(),
             nn.Linear(120, 84),
             nn.ReLU(),
-            nn.Linear(84, env.single_action_space.n),
+            nn.Linear(84, action_count),
         )
 
     def forward(self, x):
@@ -204,9 +204,9 @@ if __name__ == "__main__":
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    q_network = QNetwork(envs).to(device)
+    q_network = QNetwork(envs.single_observation_space.shape, envs.single_action_space.n).to(device)
     optimizer = optim.Adam(q_network.parameters(), lr=args.learning_rate)
-    target_network = QNetwork(envs).to(device)
+    target_network = QNetwork(envs.single_observation_space.shape, envs.single_action_space.n).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
     rb = ReplayBuffer(
@@ -216,6 +216,9 @@ if __name__ == "__main__":
         device,
     )
     start_time = time.time()
+
+    recent_returns = []
+    recent_heights = []
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
@@ -235,10 +238,19 @@ if __name__ == "__main__":
         if "_episode" in infos:
             for idx, d in enumerate(infos["_episode"]):
                 if d:
-                    print(f"global_step={global_step}, episodic_return={infos['episode']['r'][idx]:.2f}, height={infos['height'][idx]:.1f}")
+                    recent_returns.append(infos["episode"]["r"][idx])
+                    recent_heights.append(infos["height"][idx])
+
                     writer.add_scalar("charts/episodic_return", infos["episode"]["r"][idx], global_step)
                     writer.add_scalar("charts/episodic_length", infos["episode"]["l"][idx], global_step)
                     writer.add_scalar("charts/final_height", infos["height"][idx], global_step)
+
+                    if len(recent_heights) >= 10:
+                        avg_return = np.mean(recent_returns)
+                        avg_height = np.mean(recent_heights)
+                        print(f"global_step={global_step}, avg_return (last 10 eps)={avg_return:.2f}, avg_height={avg_height:.1f}")
+                        recent_returns.clear()
+                        recent_heights.clear()
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
@@ -263,7 +275,7 @@ if __name__ == "__main__":
                 old_val = q_network(data.observations).gather(1, data.actions).squeeze()
                 loss = F.mse_loss(td_target, old_val)
 
-                if global_step % 100 == 0:
+                if global_step % 1000 == 0:
                     writer.add_scalar("losses/td_loss", loss, global_step)
                     writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                     # print("SPS:", int(global_step / (time.time() - start_time)))
