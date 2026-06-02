@@ -66,19 +66,20 @@ RL_STEPS_PER_FRAME = 2    # 多少步 RL 更新一次风场数据帧
 # 奖励函数参数 (Reward)
 # ==========================================
 WIND_AMPF = 12.0          # 风场放大系数
-REWARD_LAMBDA = 0.2       # 高度变化奖励权重
+REWARD_LAMBDA = 0.5       # 高度变化奖励权重
 REWARD_SURVIVE = 0.0      # 每步生存奖励
-CONTROL_DRAG_MULTIPLIER = 1.2 # 操纵面额外阻力系数 (当 AoA 或 Bank 改变时)
+CONTROL_DRAG_MULTIPLIER = 1.1 # 操纵面额外阻力系数 (当 AoA 或 Bank 改变时)
 
 # ==========================================
 # 训练参数 (Training - Q-Learning)
 # ==========================================
-ALPHA = 0.04              # 学习率
-GAMMA = 0.999             # 折扣因子
+ALPHA_START = 0.005       # 初始学习率
+ALPHA_END = 0.005         # 最终学习率
+GAMMA = 0.98              # 折扣因子
 EPSILON_START = 1.0       # 初始探索率
 EPSILON_END = 0.01        # 最小探索率
-EPISODES = 8000           # 总训练集数
-SAVE_INTERVAL = 2000      # 模型保存间隔
+EPISODES = 10000           # 总训练集数
+SAVE_INTERVAL = 2500      # 模型保存间隔
 Q_TABLE_NAME = "q_table_v0.pkl"
 SAVE_PATH = os.path.join(Q_TABLE_DIR, Q_TABLE_NAME)
 
