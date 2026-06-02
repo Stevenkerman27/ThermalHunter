@@ -2,8 +2,6 @@
 import os
 import random
 import time
-import json
-import glob
 from dataclasses import dataclass
 
 import gymnasium as gym
@@ -16,67 +14,7 @@ import tyro
 from torch.utils.tensorboard import SummaryWriter
 
 from cleanrl_utils.buffers import ReplayBuffer
-import config
-from glider_discrete_simp import GliderEnv
 
-# --- Environment Registration ---
-try:
-    h5_files = sorted(glob.glob(os.path.join(config.WIND_DIR, 'snapshots_s*.h5')), key=config.natural_key)
-    gym.register(
-        id="GliderContinuous-v0",
-        entry_point="glider_discrete_simp:GliderEnv", 
-        max_episode_steps=1000,
-        kwargs={
-            "h5_file_path": h5_files,
-            "polar_file_base": config.POLAR_BASE,
-            "continuous_obs": True
-        }
-    )
-except Exception:
-    pass 
-
-class GliderWrapper(gym.Wrapper):
-    def __init__(self, env):
-        super().__init__(env)
-        stats_path = os.path.join(config.BASE_DIR, "sensor_stats.json")
-        if os.path.exists(stats_path):
-            with open(stats_path, "r") as f:
-                self.sensor_stats = json.load(f)
-        else:
-            self.sensor_stats = None
-        
-        # Define the observation space after normalization
-        # Obs: [aoa, bank, w_accel, delta_w]
-        low = np.array([-2.0, -2.0, -10.0, -10.0], dtype=np.float32)
-        high = np.array([2.0, 2.0, 10.0, 10.0], dtype=np.float32)
-        self.observation_space = gym.spaces.Box(low=low, high=high, dtype=np.float32)
-
-    def normalize_state(self, state):
-        s = state.copy().astype(np.float32)
-        # aoa_idx, bank_idx normalization to ~[-1, 1]
-        s[0] = (s[0] - (config.AOA_BINS / 2)) / (config.AOA_BINS / 2)
-        s[1] = (s[1] - (config.BANK_BINS / 2)) / (config.BANK_BINS / 2)
-        
-        if self.sensor_stats:
-            s[2] = (s[2] - self.sensor_stats["w_accel"]["mean"]) / self.sensor_stats["w_accel"]["std"]
-            s[3] = (s[3] - self.sensor_stats["delta_w"]["mean"]) / self.sensor_stats["delta_w"]["std"]
-        else:
-            s[2] *= 2.0 
-            s[3] *= 5.0
-        return s
-
-    def reset(self, **kwargs):
-        if kwargs.get("options") is None:
-            kwargs["options"] = {}
-        # Inject random resettime if not provided
-        if "resettime" not in kwargs["options"]:
-            kwargs["options"]["resettime"] = np.random.randint(config.RESET_TIME_MIN, config.RESET_TIME_MAX)
-        obs, info = self.env.reset(**kwargs)
-        return self.normalize_state(obs), info
-
-    def step(self, action):
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        return self.normalize_state(obs), reward, terminated, truncated, info
 
 @dataclass
 class Args:
@@ -96,7 +34,7 @@ class Args:
     """the entity (team) of wandb's project"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
-    save_model: bool = True
+    save_model: bool = False
     """whether to save model into the `runs/{run_name}` folder"""
     upload_model: bool = False
     """whether to upload the saved model to huggingface"""
@@ -104,41 +42,43 @@ class Args:
     """the user or org name of the model repository from the Hugging Face Hub"""
 
     # Algorithm specific arguments
-    env_id: str = "GliderContinuous-v0"
+    env_id: str = "CartPole-v1"
     """the id of the environment"""
-    total_timesteps: int = 600000
+    total_timesteps: int = 500000
     """total timesteps of the experiments"""
-    learning_rate: float = config.DQN_LR
+    learning_rate: float = 2.5e-4
     """the learning rate of the optimizer"""
     num_envs: int = 1
     """the number of parallel game environments"""
-    buffer_size: int = config.DQN_BUFFER_SIZE
+    buffer_size: int = 10000
     """the replay memory buffer size"""
-    gamma: float = config.DQN_GAMMA
+    gamma: float = 0.99
     """the discount factor gamma"""
     tau: float = 1.0
     """the target network update rate"""
-    target_network_frequency: int = 2000
+    target_network_frequency: int = 500
     """the timesteps it takes to update the target network"""
-    batch_size: int = config.DQN_BATCH_SIZE
+    batch_size: int = 128
     """the batch size of sample from the reply memory"""
-    start_e: float = config.DQN_EPSILON_START
+    start_e: float = 1
     """the starting epsilon for exploration"""
-    end_e: float = config.DQN_EPSILON_END
+    end_e: float = 0.05
     """the ending epsilon for exploration"""
     exploration_fraction: float = 0.5
     """the fraction of `total-timesteps` it takes from start-e to go end-e"""
-    learning_starts: int = 2000
+    learning_starts: int = 10000
     """timestep to start learning"""
-    train_frequency: int = 4
+    train_frequency: int = 10
     """the frequency of training"""
 
 
-def make_env(env_id, seed, idx, capture_video, run_name, memory_mode=True):
+def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
-        env = gym.make(env_id, memory_mode=memory_mode)
-        
-        env = GliderWrapper(env)
+        if capture_video and idx == 0:
+            env = gym.make(env_id, render_mode="rgb_array")
+            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+        else:
+            env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.action_space.seed(seed)
 
@@ -214,6 +154,7 @@ if __name__ == "__main__":
         envs.single_observation_space,
         envs.single_action_space,
         device,
+        handle_timeout_termination=False,
     )
     start_time = time.time()
 
@@ -232,23 +173,19 @@ if __name__ == "__main__":
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        if "_episode" in infos:
-            for idx, d in enumerate(infos["_episode"]):
-                if d:
-                    print(f"global_step={global_step}, episodic_return={infos['episode']['r'][idx]:.2f}, height={infos['height'][idx]:.1f}")
-                    writer.add_scalar("charts/episodic_return", infos["episode"]["r"][idx], global_step)
-                    writer.add_scalar("charts/episodic_length", infos["episode"]["l"][idx], global_step)
-                    writer.add_scalar("charts/final_height", infos["height"][idx], global_step)
+        if "final_info" in infos:
+            for info in infos["final_info"]:
+                if info and "episode" in info:
+                    print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
+                    writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
+                    writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
-            if trunc and "final_observation" in infos:
+            if trunc:
                 real_next_obs[idx] = infos["final_observation"][idx]
-            elif trunc and "_final_observation" in infos and infos["_final_observation"][idx]:
-                # Handle cases where Gymnasium uses _final_observation mask
-                real_next_obs[idx] = infos["final_observation"][idx]
-        rb.add(obs, real_next_obs, actions, rewards, terminations)
+        rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
@@ -266,7 +203,7 @@ if __name__ == "__main__":
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/td_loss", loss, global_step)
                     writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
-                    # print("SPS:", int(global_step / (time.time() - start_time)))
+                    print("SPS:", int(global_step / (time.time() - start_time)))
                     writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
                 # optimize the model
@@ -281,44 +218,31 @@ if __name__ == "__main__":
                         args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data
                     )
 
-    envs.close()
-    del rb
-    import gc
-    gc.collect()
-    if device.type == "cuda":
-        torch.cuda.empty_cache()
-
     if args.save_model:
         model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
         torch.save(q_network.state_dict(), model_path)
         print(f"model saved to {model_path}")
-        
-        # Also save to config.DQN_SAVE_PATH for compatibility with existing scripts
-        torch.save(q_network.state_dict(), config.DQN_SAVE_PATH)
-        print(f"model also saved to {config.DQN_SAVE_PATH}")
+        from cleanrl_utils.evals.dqn_eval import evaluate
 
-        # Manual evaluation to ensure memory control
-        print("Starting evaluation...")
-        q_network.eval()
-        eval_env = make_env(args.env_id, args.seed + 100, 0, False, f"{run_name}-eval", memory_mode=False)()
-        episodic_returns = []
-        for i in range(10):
-            obs, _ = eval_env.reset()
-            done = False
-            episodic_return = 0
-            while not done:
-                with torch.no_grad():
-                    q_values = q_network(torch.Tensor(obs).to(device).unsqueeze(0))
-                    action = torch.argmax(q_values, dim=1).item()
-                obs, reward, terminated, truncated, info = eval_env.step(action)
-                episodic_return += reward
-                done = terminated or truncated
-            episodic_returns.append(episodic_return)
-            print(f"Eval episode {i}: return={episodic_return:.2f}")
-            writer.add_scalar("eval/episodic_return", episodic_return, i)
-        
-        eval_env.close()
-        print("Evaluation finished and eval_env closed.")
+        episodic_returns = evaluate(
+            model_path,
+            make_env,
+            args.env_id,
+            eval_episodes=10,
+            run_name=f"{run_name}-eval",
+            Model=QNetwork,
+            device=device,
+            epsilon=args.end_e,
+        )
+        for idx, episodic_return in enumerate(episodic_returns):
+            writer.add_scalar("eval/episodic_return", episodic_return, idx)
 
+        if args.upload_model:
+            from cleanrl_utils.huggingface import push_to_hub
+
+            repo_name = f"{args.env_id}-{args.exp_name}-seed{args.seed}"
+            repo_id = f"{args.hf_entity}/{repo_name}" if args.hf_entity else repo_name
+            push_to_hub(args, episodic_returns, repo_id, "DQN", f"runs/{run_name}", f"videos/{run_name}-eval")
+
+    envs.close()
     writer.close()

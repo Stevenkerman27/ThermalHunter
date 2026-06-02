@@ -7,6 +7,7 @@ make_pkl.py制作理想策略
 test_wind_reading.py为测试风场数据的代码
 glider_discrete_simp.py为环境定义主文件 (已通过物理预计算表优化，训练速度约 5000 steps/s)
 glider_train.py为训练代码 (集成自动评估功能)
+train_dqn.py 为基于 CleanRL 实现的 DQN 训练代码，支持 Tensorboard 和高效内存管理。
 
 # 开发基线
 1. 物理计算优化：由于 AoA 固定且 Bank 离散，使用 `physics_table` 预计算平衡状态，避免在 `step` 中调用 `scipy.interpolate`。
@@ -15,3 +16,4 @@ glider_train.py为训练代码 (集成自动评估功能)
 4. 奖励函数：采用混合稠密奖励 `reward = current_uz + 5*w_accel + (dz * lambda)`。其中 `dz * lambda` 为每步高度变化奖励，用于解决长序列中的信用分配(Credit Assignment)问题。
 6. 评估并行化：`eval_all.py` 通过 `MultiGliderEvaluator` 实现了在同一风场 realization 下并行推进多个不同策略的 gliders，共享风场步进开销，大幅提升评估速度。
 7. 操纵面阻力模拟：为了真实反映频繁改变姿态的代价，引入 `CONTROL_DRAG_MULTIPLIER` (默认1.1)。当 Agent 改变 AoA 或 Bank 索引时，该步物理积分使用 `physics_table_drag` (Cd 放大 1.1x 后的平衡态)，模拟控制面偏转产生的额外诱导阻力。
+8. DQN 实现：已迁移至 `train_dqn.py` (CleanRL 架构)，支持自动化资源释放与评估。训练时使用内存模式加载风场，评估时自动切换为磁盘延迟加载模式以防止内存爆炸。
