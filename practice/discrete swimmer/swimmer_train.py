@@ -16,12 +16,12 @@ register(
 
 # =================配置参数=================
 GRID_SIZE = 25
-NUM_EPISODES = 40       # 训练总局数
+NUM_EPISODES = 50       # 训练总局数
 LEARNING_RATE = 0.01
 GAMMA = 0.1
 EPSILON_START = 0.1
 EPSILON_END = 0.01
-SAVE_FREQ = 4
+SAVE_FREQ = 5
 Q_INIT_VALUE = 10
 
 # =================主程序=================
@@ -101,7 +101,7 @@ if __name__ == "__main__":
     data = np.array(metrics)
     
     # 1. 设置基准线 (1.0 代表完美表现)
-    plt.axhline(y=1.0, color='r', linestyle='--', label='Optimal (1.0)')
+    plt.axhline(y=1.0, color='r', linestyle='--', label='Optimal Performance')
 
     # 绘制保存点的竖线
     save_interval = NUM_EPISODES // SAVE_FREQ
@@ -117,16 +117,23 @@ if __name__ == "__main__":
 
     # 3. 绘制原始数据
     if do_smooth:
-        plt.plot(data, color='gray', alpha=0.2, label='Raw Metrics')
+        # 轴标题已经指定的数据不使用legend
+        plt.plot(data, color='gray', alpha=0.2)
         # 绘制平滑曲线（核心）
         smooth_data = np.convolve(data, np.ones(window_size)/window_size, mode='valid')
         x_smooth = np.arange(window_size, len(data) + 1)
-        plt.plot(x_smooth, smooth_data, color='blue', linewidth=2, label='Smoothed Metrics')
+        plt.plot(x_smooth, smooth_data, color='green', linewidth=2)
         plt.ylim(bottom=min(smooth_data) * 0.9, top=1.2)
     else:
-        # 如果不平滑，加深原始数据的颜色
-        plt.plot(data, color='blue', alpha=0.6, label='Raw Metrics')
+        # 轴标题已经指定的数据不使用legend
+        plt.plot(data, color='green', alpha=0.6)
         plt.ylim(bottom=min(data) * 0.9, top=1.2)
+    
+    # 必须为所有文字指定字体大小，xy轴必须有轴标题
+    plt.xlabel("Episode", fontsize=18)
+    plt.ylabel("Metrics", fontsize=18)
+    plt.title("Swimmer Training Metrics", fontsize=20)
+
     plt.legend(loc='lower right', fontsize=18)
     plt.tick_params(axis='both', labelsize=16)
     plt.grid(True)

@@ -58,15 +58,7 @@ def simulate_with_env():
         print(f"成功加载 Q-table: {TABULAR_PATH}")
         def tabular_policy(obs):
             q_values = q_table[tuple(obs)]
-            best_action = np.argmax(q_values)
-            
-            # Hysteresis: Only switch from HOLD (4) if best Q is significantly better
-            if best_action != 4:
-                q_range = np.max(q_values) - np.min(q_values)
-                threshold = max(config.DQN_ACTION_MARGIN_MIN, config.DQN_ACTION_MARGIN_K * q_range)
-                if q_values[best_action] < q_values[4] + threshold:
-                    return 4
-            return best_action
+            return np.argmax(q_values)
         policy_fn = tabular_policy
     else:
         if not os.path.exists(DQN_PATH):
@@ -83,22 +75,14 @@ def simulate_with_env():
             state_t = torch.FloatTensor(s_norm).unsqueeze(0).to(device)
             with torch.no_grad():
                 q_values = model(state_t).squeeze()
-                best_action = q_values.argmax().item()
-                
-                # Hysteresis logic
-                if best_action != 4:
-                    q_range = q_values.max() - q_values.min()
-                    threshold = max(config.DQN_ACTION_MARGIN_MIN, config.DQN_ACTION_MARGIN_K * q_range)
-                    if q_values[best_action] < q_values[4] + threshold:
-                        return 4
-                return best_action
+                return q_values.argmax().item()
         policy_fn = dqn_policy
 
     obs, info = env.reset(options={"resettime": 80})
     start_h = info["height"]
     
     # ================= 3. 执行模拟 =================
-    history = []      # 记录位置 [x, y, z]
+    history = []      # 记录位置 [x, y, z] (unwrapped)
     tas_history = []  # 记录真实空速
     uz_history = []
     reward_hst = []
@@ -109,17 +93,34 @@ def simulate_with_env():
     max_steps = 1000
     print(f"开始模拟... dt_rl={env.dt_rl:.4f}s, 模式={POLICY_TYPE}")
 
-    for _ in range(max_steps):
-        # 记录当前物理状态（位置）
-        history.append(env.phy_state[:3].copy())
+    current_offset = np.array([0.0, 0.0, 0.0])
+    last_raw_pos = None
+    domain_size = np.array(CONFIG["domain_size"])
 
-        # 根据当前观测选择动作
+    for _ in range(max_steps):
+        # 1. 记录当前物理状态 (被环境 wrap 过的)
+        raw_pos = env.phy_state[:3].copy()
+        
+        # Unwrapping 逻辑：处理周期性边界引起的跳变
+        if last_raw_pos is not None:
+            delta = raw_pos - last_raw_pos
+            for i in range(2): # 假设仅 X, Y 是周期的
+                if delta[i] > domain_size[i] * 0.5:
+                    current_offset[i] -= domain_size[i]
+                elif delta[i] < -domain_size[i] * 0.5:
+                    current_offset[i] += domain_size[i]
+        
+        unwrapped_pos = raw_pos + current_offset
+        history.append(unwrapped_pos)
+        last_raw_pos = raw_pos
+
+        # 2. 根据当前观测选择动作
         action = policy_fn(obs)
         
-        # 执行动作
+        # 3. 执行动作
         obs, reward, terminated, truncated, info = env.step(action)
         
-        # 从 info 中提取物理数据 
+        # 4. 从 info 中提取物理数据 (这些是基于 step 之前状态计算的结果或 step 过程中的结果)
         tas_history.append(info["tas"]) 
         uz_history.append(info["uz"])
         w_accels.append(info["w_accel"])
@@ -130,9 +131,7 @@ def simulate_with_env():
         # 记录观察值
         obs_aoa_idxs.append(obs[0])
         obs_bank_idxs.append(obs[1])
-        # 如果是 DQN，obs[2] 和 obs[3] 是连续值，记录到物理数据即可，这里存占位符或者转换后的索引
         if POLICY_TYPE == "dqn":
-            # 这里简单地把连续值存入 idx 列表，绘图脚本会处理
             obs_w_accel_idxs.append(obs[2]) 
             obs_delta_w_idxs.append(obs[3])
         else:
@@ -141,6 +140,15 @@ def simulate_with_env():
         reward_hst.append(reward)
 
         if terminated or truncated:
+            # 记录最后一步的状态
+            final_raw_pos = env.phy_state[:3].copy()
+            delta = final_raw_pos - last_raw_pos
+            for i in range(2):
+                if delta[i] > domain_size[i] * 0.5:
+                    current_offset[i] -= domain_size[i]
+                elif delta[i] < -domain_size[i] * 0.5:
+                    current_offset[i] += domain_size[i]
+            history.append(final_raw_pos + current_offset)
             break
 
     print(f"模拟结束。总奖励: {np.sum(reward_hst):.2f}, 开始高度：{start_h:.2f}m, 最终高度: {info['height']:.2f}m")
@@ -168,20 +176,16 @@ def _plot_all_results(history, tas, uz, reward_hst, w_accels, delta_ws, obs_aoa_
     fig1 = plt.figure(figsize=(10, 7))
     ax3d = fig1.add_subplot(111, projection='3d')
     
-    # 核心修正：N个点生成N-1条线段
+    # 不再过滤穿越边界的无效线段，直接显示连续轨迹
     points = history[:-1].reshape(-1, 1, 3)
     next_points = history[1:].reshape(-1, 1, 3)
     segments = np.concatenate([points, next_points], axis=1)
     
-    # 过滤穿越边界的无效线段 (周期性边界条件)
-    diffs = np.linalg.norm(segments[:, 0, :] - segments[:, 1, :], axis=1)
-    valid_mask = diffs < (min(domain_size) * 0.5) 
-    
     uz_for_segments = uz[:len(segments)] # 使用垂直风速
     
-    lc = Line3DCollection(segments[valid_mask], cmap='viridis', 
+    lc = Line3DCollection(segments, cmap='viridis', 
                           norm=Normalize(vmin=uz.min(), vmax=uz.max()))
-    lc.set_array(uz_for_segments[valid_mask])
+    lc.set_array(uz_for_segments)
     
     ax3d.add_collection3d(lc)
     cbar = fig1.colorbar(lc, ax=ax3d, label='Vertical Wind Speed(m/s)', pad=0.1,shrink=0.6, aspect=10)
@@ -203,7 +207,11 @@ def _plot_all_results(history, tas, uz, reward_hst, w_accels, delta_ws, obs_aoa_
     ax3d.text(end_pt[0], end_pt[1], end_pt[2], "  End", 
               color='red', fontsize=12, fontweight='bold')
     
-    ax3d.set_xlim(0, domain_size[0]); ax3d.set_ylim(0, domain_size[1]); ax3d.set_zlim(0, domain_size[2])
+    # 自动调整坐标轴范围以适应轨迹，不再限制在 domain_size 内
+    all_coords = history
+    ax3d.set_xlim(all_coords[:, 0].min(), all_coords[:, 0].max())
+    ax3d.set_ylim(all_coords[:, 1].min(), all_coords[:, 1].max())
+    ax3d.set_zlim(all_coords[:, 2].min(), all_coords[:, 2].max())
 
     # --- 图 2: 特征分析图 ---
     fig2, axes = plt.subplots(5, 1, figsize=(12, 8), sharex=True)

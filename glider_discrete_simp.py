@@ -311,6 +311,7 @@ class GliderEnv(gym.Env):
 
             if (self.phy_state[2] <= self.domain_size[2] * 0.1) or (self.phy_state[2] >= self.domain_size[2] * 0.9):
                 terminated = True
+                self.last_terminal_height = self.phy_state[2]
                 break
 
         # --- RL步数管理与风场帧更新 ---
@@ -319,6 +320,7 @@ class GliderEnv(gym.Env):
             # 只有达到指定步数才切换到下一个 H5 数据帧
             if not self.wind_manager.step_time():
                 truncated = True  # 数据读完了
+                self.last_terminal_height = self.phy_state[2]
 
         # 计算本步平均传感器数值
         self.w_accel = sum_w_accel / self.n_phys_per_rl
@@ -335,12 +337,16 @@ class GliderEnv(gym.Env):
             "control": [aoa_rad, bank_rad], 
             "height": self.phy_state[2],
             "tas": v_tas,
-            "uz": current_uz
+            "uz": current_uz,
+            "prev_height": getattr(self, "last_terminal_height", 0.0)
         }
         return self._get_obs(), reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+        # Capture final height of previous episode
+        prev_h = getattr(self, 'last_terminal_height', 0.0)
+
         self.rl_step_counter = 0  # 重置计数器
         self.wind_manager.reset(options.get("resettime", 0) if options else 0)
         if self.random_init:
@@ -358,7 +364,7 @@ class GliderEnv(gym.Env):
         self.last_idx_az = None
         self.last_idx_dw = None
 
-        return self._get_obs(), {"height": self.phy_state[2]}
+        return self._get_obs(), {"height": self.phy_state[2], "prev_height": prev_h}
     
     def _apply_hysteresis(self, value, bins, last_idx):
         # 初始步，直接返回 digitize 结果

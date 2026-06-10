@@ -21,6 +21,7 @@ env = GliderEnv(h5_file_path=h5_files, polar_file_base=config.POLAR_BASE, memory
 N_EPISODES = 50  # 磁盘读取较慢，跑50个Episode足够统计
 accel_data = []
 delta_w_data = []
+w_speed_data = []
 
 print(f"开始运行随机策略收集传感器数据 (磁盘读取模式)...")
 for ep in range(N_EPISODES):
@@ -32,12 +33,19 @@ for ep in range(N_EPISODES):
         obs, reward, terminated, truncated, info = env.step(action)
         accel_data.append(info["w_accel"])
         delta_w_data.append(info["delta_w"])
+
+        # 计算 3D 风速向量的模 (即风速绝对值)
+        w_vec = env.wind_manager.get_wind(*env.phy_state[:3]) * env.wind_ampf
+        w_speed = np.linalg.norm(w_vec)
+        w_speed_data.append(w_speed)
+
         done = terminated or truncated
     print(f"Episode {ep+1}/{N_EPISODES} finished.")
 
 # --- 3. 统计与可视化 ---
 accel_data = np.array(accel_data)
 delta_w_data = np.array(delta_w_data)
+w_speed_data = np.array(w_speed_data)
 
 stats = {
     "w_accel": {
@@ -47,6 +55,11 @@ stats = {
     "delta_w": {
         "mean": float(np.mean(delta_w_data)),
         "std": float(np.std(delta_w_data))
+    },
+    "wind_speed": {
+        "mean": float(np.mean(w_speed_data)),
+        "std": float(np.std(w_speed_data)),
+        "rms": float(np.sqrt(np.mean(w_speed_data**2)))
     }
 }
 
@@ -65,6 +78,13 @@ def print_stats(name, data):
 
 print_stats("Vertical Acceleration (w_accel)", accel_data)
 print_stats("Wingtip Difference (delta_w)", delta_w_data)
+
+# 打印 总风速 (3D Magnitude) 的 RMS
+print(f"\n--- Total Wind Speed (Magnitude) 统计结果 (WIND_AMPF={config.WIND_AMPF}) ---")
+print(f"风速绝对值的均方根 (RMS Speed): {stats['wind_speed']['rms']:.4f}")
+print(f"均值: {stats['wind_speed']['mean']:.4f}")
+print(f"标准差 (Std): {stats['wind_speed']['std']:.4f}")
+
 
 # 绘图
 plt.figure(figsize=(12, 5))

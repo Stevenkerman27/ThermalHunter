@@ -4,3 +4,5 @@ pics/
 __pycache__/
 .vscode/
 convective_plumes_xz.gif
+runs/
+.pytest_cache/

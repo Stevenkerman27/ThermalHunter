@@ -45,19 +45,22 @@ def normalize_state(state, sensor_stats=None):
         s[2] = (s[2] - sensor_stats["w_accel"]["mean"]) / sensor_stats["w_accel"]["std"]
         s[3] = (s[3] - sensor_stats["delta_w"]["mean"]) / sensor_stats["delta_w"]["std"]
     else:
-        s[2] *= 2.0 
-        s[3] *= 5.0
+        # Fallback to broad scaling if stats not provided
+        s[2] *= 3.0 
+        s[3] *= 4.0
     return s
+
+def load_sensor_stats():
+    stats_path = os.path.join(config.BASE_DIR, "sensor_stats.json")
+    if os.path.exists(stats_path):
+        with open(stats_path, "r") as f:
+            return json.load(f)
+    return None
 
 class GliderWrapper(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
-        stats_path = os.path.join(config.BASE_DIR, "sensor_stats.json")
-        if os.path.exists(stats_path):
-            with open(stats_path, "r") as f:
-                self.sensor_stats = json.load(f)
-        else:
-            self.sensor_stats = None
+        self.sensor_stats = load_sensor_stats()
         
         # Define the observation space after normalization
         # Obs: [aoa, bank, w_accel, delta_w]
@@ -98,6 +101,10 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     save_model: bool = True
     """whether to save model into the `runs/{run_name}` folder"""
+    load_model: str = ""
+    """path to an existing model to load (empty for none)"""
+    num_checkpoints: int = 5
+    """the number of checkpoints to save during training"""
     upload_model: bool = False
     """whether to upload the saved model to huggingface"""
     hf_entity: str = ""
@@ -134,7 +141,7 @@ class Args:
     """the frequency of training"""
 
 
-def make_env(env_id, seed, idx, capture_video, run_name, memory_mode=True):
+def make_env(env_id, seed, idx, capture_video, run_name, memory_mode=False):
     def thunk():
         env = gym.make(env_id, memory_mode=memory_mode)
         
@@ -205,6 +212,15 @@ if __name__ == "__main__":
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
     q_network = QNetwork(envs.single_observation_space.shape, envs.single_action_space.n).to(device)
+    
+    # Load model if specified
+    if args.load_model and os.path.exists(args.load_model):
+        q_network.load_state_dict(torch.load(args.load_model, map_location=device))
+        print(f"Loaded existing model from {args.load_model}")
+    elif os.path.exists(config.DQN_SAVE_PATH):
+        # Optional: Auto-load global model if found? Let's make it explicit via args instead.
+        pass
+
     optimizer = optim.Adam(q_network.parameters(), lr=args.learning_rate)
     target_network = QNetwork(envs.single_observation_space.shape, envs.single_action_space.n).to(device)
     target_network.load_state_dict(q_network.state_dict())
@@ -217,20 +233,35 @@ if __name__ == "__main__":
     )
     start_time = time.time()
 
+    import csv
+    log_file_path = os.path.join(config.TRAIN_RESULT_DIR, "dqn_train_stats.csv")
+    log_file = open(log_file_path, "w", newline="")
+    log_writer = csv.writer(log_file)
+    log_writer.writerow(["step", "return", "climb"])
+
     recent_returns = []
     recent_climbs = []
+    # Full history for plotting
+    all_returns = []
+    all_climbs = []
+    
     # Track initial height for each env to calculate net climb
+    # IMPORTANT: Initial heights MUST be captured after the first reset
     episode_start_heights = np.zeros(envs.num_envs)
 
+    checkpoint_interval = args.total_timesteps // args.num_checkpoints if args.num_checkpoints > 0 else None
+    
     # TRY NOT TO MODIFY: start the game
     obs, infos = envs.reset(seed=args.seed)
     episode_start_heights = infos["height"].copy()
+    
     for global_step in range(args.total_timesteps):
-        # Capture current height before step to use as final_height if episode ends
-        prev_heights = infos["height"].copy()
-        
         # ALGO LOGIC: put action logic here
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
+        
+        # If model was loaded, maybe we want to start with lower epsilon? 
+        # For now, follow the schedule.
+        
         if random.random() < epsilon:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
@@ -244,34 +275,44 @@ if __name__ == "__main__":
         if "_episode" in infos:
             for idx, d in enumerate(infos["_episode"]):
                 if d:
-                    # Calculate net climb using height before reset
-                    final_height = prev_heights[idx]
+                    # After auto-reset, GliderEnv provides 'prev_height' (terminal height of finished episode)
+                    # and 'height' (start height of new episode)
+                    final_height = infos.get("prev_height", [0]*envs.num_envs)[idx]
                     net_climb = final_height - episode_start_heights[idx]
-                    recent_returns.append(infos["episode"]["r"][idx])
+                    ep_return = infos["episode"]["r"][idx]
+                    
+                    recent_returns.append(ep_return)
                     recent_climbs.append(net_climb)
+                    all_returns.append(ep_return)
+                    all_climbs.append(net_climb)
 
-                    writer.add_scalar("charts/episodic_return", infos["episode"]["r"][idx], global_step)
+                    # Log to CSV
+                    log_writer.writerow([global_step, ep_return, net_climb])
+                    log_file.flush()
+
+                    writer.add_scalar("charts/episodic_return", ep_return, global_step)
                     writer.add_scalar("charts/episodic_length", infos["episode"]["l"][idx], global_step)
                     writer.add_scalar("charts/net_climb", net_climb, global_step)
 
                     if len(recent_climbs) >= 10:
                         avg_return = np.mean(recent_returns)
                         avg_climb = np.mean(recent_climbs)
-                        print(f"global_step={global_step}, avg_return (last 10 eps)={avg_return:.2f}, avg_climb={avg_climb:.1f}")
+                        print(f"global_step={global_step}, avg_return (last 10 eps)={avg_return:.2f}, avg_climb={avg_climb:.1f}m")
                         recent_returns.clear()
                         recent_climbs.clear()
                     
                     # Update initial height for the NEXT episode in this env
+                    # After reset, infos["height"] contains the height of the new episode
                     episode_start_heights[idx] = infos["height"][idx]
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
         for idx, trunc in enumerate(truncations):
-            if trunc and "final_observation" in infos:
-                real_next_obs[idx] = infos["final_observation"][idx]
-            elif trunc and "_final_observation" in infos and infos["_final_observation"][idx]:
-                # Handle cases where Gymnasium uses _final_observation mask
-                real_next_obs[idx] = infos["final_observation"][idx]
+            if trunc:
+                final_obs = infos.get("final_observation")
+                if final_obs is not None:
+                    real_next_obs[idx] = final_obs[idx]
+        
         rb.add(obs, real_next_obs, actions, rewards, terminations)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
@@ -305,6 +346,19 @@ if __name__ == "__main__":
                         args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data
                     )
 
+        # Checkpoint saving
+        if args.save_model and checkpoint_interval is not None:
+            if (global_step + 1) % checkpoint_interval == 0 or (global_step + 1) == args.total_timesteps:
+                model_path = f"runs/{run_name}/{args.exp_name}_{global_step + 1}.cleanrl_model"
+                os.makedirs(os.path.dirname(model_path), exist_ok=True)
+                torch.save(q_network.state_dict(), model_path)
+                print(f"Checkpoint saved to {model_path} at step {global_step + 1}")
+                
+                # Additionally save the final model to the global path
+                if (global_step + 1) == args.total_timesteps:
+                    torch.save(q_network.state_dict(), config.DQN_SAVE_PATH)
+                    print(f"Final model also saved to global path: {config.DQN_SAVE_PATH}")
+
     envs.close()
     del rb
     import gc
@@ -313,15 +367,6 @@ if __name__ == "__main__":
         torch.cuda.empty_cache()
 
     if args.save_model:
-        model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
-        torch.save(q_network.state_dict(), model_path)
-        print(f"model saved to {model_path}")
-        
-        # Also save to config.DQN_SAVE_PATH for compatibility with existing scripts
-        torch.save(q_network.state_dict(), config.DQN_SAVE_PATH)
-        print(f"model also saved to {config.DQN_SAVE_PATH}")
-
         # Manual evaluation to ensure memory control
         print("Starting evaluation...")
         q_network.eval()
@@ -346,3 +391,8 @@ if __name__ == "__main__":
         print("Evaluation finished and eval_env closed.")
 
     writer.close()
+
+    # --- Plotting Training Curve (External Script) ---
+    from plot_dqn_train import plot_dqn_training
+    plot_dqn_training()
+

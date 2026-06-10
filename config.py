@@ -86,18 +86,24 @@ SAVE_PATH = os.path.join(Q_TABLE_DIR, Q_TABLE_NAME)
 # ==========================================
 # 训练参数 (Training - DQN)
 # ==========================================
-DQN_LR = 1e-4
-DQN_GAMMA = 0.99
-DQN_BATCH_SIZE = 32
+DQN_LR = 6e-5
+DQN_GAMMA = 0.995
+DQN_BATCH_SIZE = 128
 DQN_BUFFER_SIZE = 100000
-DQN_TARGET_UPDATE_INTERVAL = 10
+DQN_TARGET_UPDATE_INTERVAL = 10 # 用于旧脚本，新脚本使用 DQN_TARGET_FREQ
 DQN_HIDDEN_SIZE = 32
-DQN_SAVE_PATH = os.path.join(Q_TABLE_DIR, "dqn_model.pth")
 DQN_EPSILON_START = 1.0
 DQN_EPSILON_END = 0.05
 DQN_EPISODES = 3000
+DQN_TOTAL_TIMESTEPS = 500000
+DQN_TAU = 1.0
+DQN_TARGET_FREQ = 4000
+DQN_EXPLORATION_FRACTION = 0.5
+DQN_LEARNING_STARTS = 2000
+DQN_TRAIN_FREQ = 4
 DQN_ACTION_MARGIN_K = 0.1  # 动态阈值系数
 DQN_ACTION_MARGIN_MIN = 0.02 # 固定最小阈值
+DQN_SAVE_PATH = os.path.join(Q_TABLE_DIR, "dqn_model.pth") # 用于 train_dqn.py 保存路径
 
 # 追踪特定的 Q 值索引 (s_aoa, s_bank, s_accel, s_delta, action)
 TRACK_INDICES = [(2, 3, 1, 1, 4), (2, 3, 2, 2, 0), (2, 3, 0, 0, 8)]
@@ -105,4 +111,4 @@ TRACK_INDICES = [(2, 3, 1, 1, 4), (2, 3, 2, 2, 0), (2, 3, 0, 0, 8)]
 # ==========================================
 # 评估参数 (Evaluation)
 # ==========================================
-N_EVAL_EPISODES = 500     # 评估时的集数
+N_EVAL_EPISODES = 300     # 评估时的集数

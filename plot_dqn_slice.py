@@ -101,12 +101,17 @@ def main():
     }
     
     # Pattern mapping (Bank Delta)
-    # Bank -1: \\, Bank 0: None, Bank +1: //
+    # Bank -1: \ (density 3), Bank 0: None, Bank +1: / (density 3)
     bank_hatches = {
-        -1: '\\\\',
+        -1: '\\\\\\', 
          0: '',
-         1: '////'
+         1: '///'
     }
+
+    # Create a 9-color colormap where colors are grouped by AoA action
+    # Index i // 3 gives the AoA delta: 0 -> -1, 1 -> 0, 2 -> +1
+    color_list = [aoa_colors[-1]]*3 + [aoa_colors[0]]*3 + [aoa_colors[1]]*3
+    aoa_cmap = ListedColormap(color_list)
     
     fig, axes = plt.subplots(3, 3, figsize=(12, 12), sharex=True, sharey=True)
     
@@ -118,7 +123,18 @@ def main():
             
             W, D, action_grid = generate_decision_map(model, sensor_stats, aoa_idx, bank_idx)
             
-            ax.pcolormesh(W, D, action_grid, cmap=cmap, shading='auto', alpha=0.9, vmin=0, vmax=8)
+            # Step 1: Plot background colors (AoA actions)
+            ax.pcolormesh(W, D, action_grid, cmap=aoa_cmap, vmin=0, vmax=8, shading='auto')
+            
+            # Step 2: Overlay hatching for Bank actions (-1 and +1)
+            for b_delta in [-1, 1]:
+                h = bank_hatches[b_delta]
+                mask = ((action_grid % 3) - 1 == b_delta)
+                if np.any(mask):
+                    masked_data = np.ma.masked_where(~mask, action_grid)
+                    # Use facecolor='none' to overlay hatch lines in black
+                    ax.pcolor(W, D, masked_data, facecolor='none', hatch=h, 
+                              shading='auto', edgecolor='black', linewidth=0)
             
             ax.axhline(0, color='black', linestyle='--', alpha=0.2)
             ax.axvline(0, color='black', linestyle='--', alpha=0.2)
@@ -135,9 +151,16 @@ def main():
     for a_idx in range(9):
         aoa_delta = (a_idx // 3) - 1
         bank_delta = (a_idx % 3) - 1
+        
         label = f"AoA{aoa_delta:+} Bank{bank_delta:+}"
         if a_idx == 4: label = "HOLD"
-        legend_elements.append(Patch(facecolor=colors[a_idx], label=label))
+        
+        legend_elements.append(Patch(
+            facecolor=aoa_colors[aoa_delta], 
+            hatch=bank_hatches[bank_delta],
+            label=label,
+            edgecolor='black' if bank_hatches[bank_delta] else 'none'
+        ))
     
     fig.legend(handles=legend_elements, loc='lower center', bbox_to_anchor=(0.5, 0.005),
                ncol=3, frameon=True, handletextpad=0.5, columnspacing=1.0)

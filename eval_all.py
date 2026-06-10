@@ -314,6 +314,14 @@ if __name__ == "__main__":
     h5_files = sorted(glob.glob(os.path.join(config.WIND_DIR, 'snapshots_s*.h5')), key=config.natural_key)
     evaluator = MultiGliderEvaluator(h5_files)
     
+    # Load Sensor Stats for DQN Normalization
+    from train_dqn import load_sensor_stats
+    sensor_stats = load_sensor_stats()
+    if sensor_stats:
+        print("Loaded Sensor Stats for DQN normalization.")
+    else:
+        print("Warning: Sensor Stats not found. Using fallback normalization.")
+
     # DQN Dimensions: [aoa_idx, bank_idx, w_accel, delta_w] -> 4, Actions -> 9
     state_dim = 4
     action_dim = 9
@@ -351,18 +359,10 @@ if __name__ == "__main__":
                 
             # DQN action
             if obs_list[2] is not None:
-                s_norm = normalize_state(obs_list[2])
+                s_norm = normalize_state(obs_list[2], sensor_stats)
                 state_t = torch.FloatTensor(s_norm).unsqueeze(0).to(device)
                 with torch.no_grad():
-                    q_values = dqn_model(state_t).squeeze()
-                    best_action = q_values.argmax().item()
-                    # Hysteresis
-                    if best_action != 4:
-                        q_range = q_values.max() - q_values.min()
-                        threshold = max(config.DQN_ACTION_MARGIN_MIN, config.DQN_ACTION_MARGIN_K * q_range)
-                        if q_values[best_action] < q_values[4] + threshold:
-                            best_action = 4
-                    actions.append(best_action)
+                    actions.append(dqn_model(state_t).squeeze().argmax().item())
             else:
                 actions.append(0) # placeholder
                 
