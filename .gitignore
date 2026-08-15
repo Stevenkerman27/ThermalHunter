@@ -1,4 +1,4 @@
-wind/
+﻿wind/
 archive
 pics/
 __pycache__/
@@ -6,3 +6,12 @@ __pycache__/
 convective_plumes_xz.gif
 runs/
 .pytest_cache/
+trainresult/
+q_table/
+*.pkl
+*.npy
+*.pth
+*.cleanrl_model
+*.gif
+*.png
+*.csv
