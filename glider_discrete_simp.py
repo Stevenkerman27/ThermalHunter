@@ -101,6 +101,13 @@ class RBWindField:
         return False
 
     def get_wind(self, x, y, z):
+        return self._get_wind_at_index(self.global_t_idx, x, y, z)
+
+    def _get_wind_at_index(self, global_t_idx, x, y, z):
+        global_t_idx = int(np.clip(global_t_idx, 0, self.max_t_idx))
+        file_idx = int(np.searchsorted(self.t_offsets, global_t_idx, side='right') - 1)
+        file_idx = min(file_idx, len(self.dsets_list) - 1)
+        local_t_idx = global_t_idx - self.t_offsets[file_idx]
         fx = np.clip((x / self.domain_size[0]) * (self.space_range[0] - 1), 0, self.space_range[0] - 1.00001)
         fy = np.clip((y / self.domain_size[1]) * (self.space_range[1] - 1), 0, self.space_range[1] - 1.00001)
         fz = np.clip((z / self.domain_size[2]) * (self.space_range[2] - 1), 0, self.space_range[2] - 1.00001)
@@ -108,14 +115,26 @@ class RBWindField:
         ix0, iy0, iz0 = int(fx), int(fy), int(fz)
         dx, dy, dz = fx - ix0, fy - iy0, fz - iz0
 
-        slices = (slice(self.local_t_idx, self.local_t_idx + 1), slice(ix0, ix0 + 2), slice(iy0, iy0 + 2), slice(iz0, iz0 + 2))
-        dsets = self.dsets_list[self.current_file_idx]
+        slices = (slice(local_t_idx, local_t_idx + 1), slice(ix0, ix0 + 2), slice(iy0, iy0 + 2), slice(iz0, iz0 + 2))
+        dsets = self.dsets_list[file_idx]
 
         return np.array([
             trilinear(dsets['ux'][slices].squeeze(), dx, dy, dz),
             trilinear(dsets['uy'][slices].squeeze(), dx, dy, dz),
             trilinear(dsets['uz'][slices].squeeze(), dx, dy, dz)
         ])
+
+    def get_wind_at_frame(self, frame_position, x, y, z):
+        """Linearly interpolate wind between adjacent global data frames."""
+        bounded_frame = float(np.clip(frame_position, 0.0, self.max_t_idx))
+        lower_idx = int(np.floor(bounded_frame))
+        upper_idx = min(lower_idx + 1, self.max_t_idx)
+        fraction = bounded_frame - lower_idx
+        lower_wind = self._get_wind_at_index(lower_idx, x, y, z)
+        if upper_idx == lower_idx:
+            return lower_wind
+        upper_wind = self._get_wind_at_index(upper_idx, x, y, z)
+        return lower_wind + fraction * (upper_wind - lower_wind)
 
     def vector_rms(self):
         total_squared_speed = 0.0

@@ -14,7 +14,7 @@ The project implements a 3D simulation environment where agents learn control po
     - Aerodynamic polar curves for glider performance.
     - Control surface drag modeling, simulating additional drag during attitude transitions.
     - Periodic boundary conditions for continuous flight in large-scale wind fields.
-- **Reward System**: A hybrid dense reward function incorporates vertical velocity, vertical acceleration, and altitude changes to address credit assignment in long-horizon tasks.
+- **Reward System**: The steady environment uses vertical wind velocity and acceleration; the dynamic PPO environment uses total-energy height change.
 - **Benchmarking Suite**: Parallel evaluation of multiple agents (Random, Tabular, and DQN) within identical wind field realizations for comparative analysis.
 - **Analysis Tools**: Utilities for 3D trajectory visualization, wind field analysis, and sensor distribution diagnostics.
 
@@ -24,6 +24,8 @@ The project implements a 3D simulation environment where agents learn control po
 - `glider_discrete_simp.py`: Core Gymnasium-compatible environment.
 - `train.py`: Unified training entry; selects tabular Q-learning or DQN.
 - `train_dqn.py`: DQN training implementation.
+- `glider_dynamic.py`: Non-steady point-mass glider environment for PPO.
+- `train_ppo.py`: CleanRL-style continuous-action PPO training.
 - `config.py`: Centralized configuration for physics, environment, and training parameters.
 - `simulator.py`: Interactive visualization tool for trajectories and manual flight.
 - `eval.py`: Fixed-scenario evaluation entry.
@@ -55,12 +57,22 @@ Select DQN explicitly:
 ```bash
 python train.py --algo dqn
 ```
-Logs and model checkpoints are stored in `runs/` and `q_table/`.
+
+Train the dynamic PPO experiment:
+```bash
+python train.py --algo ppo
+```
+Logs and model checkpoints are stored under `trainresult/`, `runs/`, and `q_table/`.
 
 ### Policy Evaluation
 Compare trained models against baseline policies:
 ```bash
 python eval.py
+```
+
+Evaluate the dynamic PPO experiment:
+```bash
+python eval.py --dynamic
 ```
 
 ### Trajectory Visualization

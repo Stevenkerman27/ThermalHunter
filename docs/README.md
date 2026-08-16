@@ -11,6 +11,9 @@
 - [配置](config.md)：唯一的滑翔机全局可调参数来源。
 - [数据契约](data.md)：风场、极线、传感器统计和产物格式。
 - [环境](glider_discrete_simp.md)：风场读取、稳态气动与 Gymnasium 环境。
+- [动态环境](glider_dynamic.md)：实时空速动力学、连续控制与物理传感器。
+- [PPO 训练](train_ppo.md)：动态环境的 CleanRL 连续动作 PPO。
+- [动态评估](eval_dynamic.md)：随机、定速定滚转与 PPO 的固定场景比较。
 - [DQN 训练](train_dqn.md)：连续传感器观测的 DQN。
 - [表格型训练](glider_train.md)：离散观测的 Q-learning。
 - [统一评估](eval_all.md)：随机、表格型和 DQN 策略在固定种子生成的随机同起点场景中对比。

@@ -73,6 +73,24 @@ DT_RL = 1.0               # RL 控制步长 (s)
 N_PHYS_PER_RL = 2         # 每个 RL 步内的物理积分次数
 RL_STEPS_PER_FRAME = 2    # 多少步 RL 更新一次风场数据帧
 
+# 动态 PPO 环境：连续积分与执行器
+DYNAMIC_DT_INTEGRATION = 0.05
+DYNAMIC_WIND_SECONDS_PER_FRAME = DT_RL * RL_STEPS_PER_FRAME
+DYNAMIC_AOA_MIN_DEG = 0.0
+DYNAMIC_AOA_MAX_DEG = 10.0
+DYNAMIC_AOA_TIME_CONSTANT = 0.5
+DYNAMIC_AOA_RATE_LIMIT_DEG_S = 10.0
+DYNAMIC_BANK_TIME_CONSTANT = 1.0
+DYNAMIC_BANK_RATE_LIMIT_DEG_S = 20.0
+DYNAMIC_MIN_TAS = 5.0
+DYNAMIC_ALTITUDE_MIN_FRACTION = 0.1
+DYNAMIC_ALTITUDE_MAX_FRACTION = 0.9
+DYNAMIC_VARIO_TIME_CONSTANT = 1.0
+DYNAMIC_VARIO_OBS_SCALE = 5.0
+DYNAMIC_ROLL_CUE_OBS_SCALE = 5.0
+DYNAMIC_BASELINE_SPEED_ACTION = 0.5
+DYNAMIC_BASELINE_ROLL_ACTION = 0.5
+
 # ==========================================
 # 风场尺度 (Wind Scale)
 # ==========================================
@@ -117,6 +135,22 @@ DQN_ACTION_MARGIN_K = 0.1  # 动态阈值系数
 DQN_ACTION_MARGIN_MIN = 0.02 # 固定最小阈值
 DQN_SAVE_PATH = os.path.join(Q_TABLE_DIR, "dqn_model.pth") # 用于 train_dqn.py 保存路径
 SENSOR_STATS_EPISODES = 20
+
+# ==========================================
+# 训练参数 (Training - Dynamic PPO)
+# ==========================================
+PPO_TOTAL_TIMESTEPS = 250000
+PPO_LEARNING_RATE = 3e-4
+PPO_NUM_STEPS = 1024
+PPO_NUM_MINIBATCHES = 32
+PPO_UPDATE_EPOCHS = 10
+PPO_GAMMA = 0.99
+PPO_GAE_LAMBDA = 0.95
+PPO_CLIP_COEF = 0.2
+PPO_ENT_COEF = 0.01
+PPO_VF_COEF = 0.5
+PPO_MAX_GRAD_NORM = 0.5
+PPO_TORCH_THREADS = 1
 
 # 追踪特定的 Q 值索引 (s_aoa, s_bank, s_accel, s_delta, action)
 TRACK_INDICES = [(2, 3, 1, 1, 4), (2, 3, 2, 2, 0), (2, 3, 0, 0, 8)]

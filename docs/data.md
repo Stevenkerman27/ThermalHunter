@@ -22,6 +22,7 @@
 
 - 表格型策略：pickle，形状为 `(AOA_BINS, BANK_BINS, 3, 3, 9)`；最终模型为 `config.SAVE_PATH`。
 - DQN 权重：PyTorch `state_dict`，输入维度为 4、动作数为 9；最终模型为 `config.DQN_SAVE_PATH`。
-- 训练结果：`trainresult/`；TensorBoard 和 DQN 检查点：`runs/`。
+- 动态 PPO 权重：PyTorch `state_dict`，输入为归一化后的 2 个动态传感器，网络侧动作为 2 维 `[-1, 1]`；Gymnasium 包装器将其转换为环境控制的 `[0, 1]^2`。
+- 训练结果：`trainresult/`；动态 PPO 的 TensorBoard 日志位于 `trainresult/ppo_runs/`，旧 DQN 的检查点位于 `runs/`。
 
 `test_wind_reading.py` 是手工诊断脚本，不是 pytest 测试。它验证跨 HDF5 文件的时间索引与插值读取；其示例域大小和坐标与主配置不同，不能据此验证主环境的物理尺度。
