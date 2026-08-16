@@ -7,7 +7,9 @@ import pandas as pd
 import torch
 
 import config
-from glider_dynamic import DynamicGliderEnv
+from glider_discrete_simp import RBWindField
+from glider_dynamic import DynamicDiscreteActionWrapper, DynamicGliderEnv
+from train_dqn import QNetwork
 from train_ppo import (
     DynamicObservationWrapper,
     PPOAgent,
@@ -17,11 +19,11 @@ from train_ppo import (
 
 
 def default_evaluation_csv_path():
-    return os.path.join(config.TRAIN_RESULT_DIR, "ppo_dynamic_evaluation.csv")
+    return os.path.join(config.TRAIN_RESULT_DIR, "dynamic_evaluation.csv")
 
 
 def default_evaluation_plot_path():
-    return os.path.join(config.TRAIN_RESULT_DIR, "ppo_dynamic_evaluation.png")
+    return os.path.join(config.TRAIN_RESULT_DIR, "dynamic_evaluation.png")
 
 
 def make_scenarios(n_episodes):
@@ -39,9 +41,11 @@ def make_scenarios(n_episodes):
     return scenarios
 
 
-def make_env():
-    env = DynamicGliderEnv(dynamic_wind_paths(), memory_mode=False)
+def make_env(wind_manager, discrete_actions=False):
+    env = DynamicGliderEnv(wind_manager=wind_manager)
     env = DynamicObservationWrapper(env)
+    if discrete_actions:
+        return DynamicDiscreteActionWrapper(env)
     return torch_action_env(env)
 
 
@@ -62,61 +66,123 @@ def load_ppo_agent(model_path, device):
     return agent
 
 
-def evaluate_policy(policy_name, scenarios, agent=None, device=None):
+def load_dynamic_dqn_agent(model_path, device):
+    action_count = config.DYNAMIC_DQN_ACTION_LEVELS ** 2
+    agent = QNetwork((2,), action_count).to(device)
+    agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    agent.eval()
+    return agent
+
+
+def evaluate_policy(policy_name, scenarios, wind_manager, agent=None, device=None):
     records = []
     random_generator = np.random.default_rng(config.EVAL_SEED + 1)
-    for scenario_index, scenario in enumerate(scenarios):
-        env = make_env()
-        observation, info = env.reset(seed=config.EVAL_SEED + scenario_index, options=scenario)
-        initial_height = info["height"]
-        initial_energy_height = info["energy_height"]
-        episode_return = 0.0
-        step_count = 0
-        terminated = truncated = False
-        while not (terminated or truncated):
-            if policy_name == "Random":
-                action = random_generator.uniform(-1.0, 1.0, size=2).astype(np.float32)
-            elif policy_name == "Cruise":
-                action = np.array(
-                    [
-                        2.0 * config.DYNAMIC_BASELINE_SPEED_ACTION - 1.0,
-                        2.0 * config.DYNAMIC_BASELINE_ROLL_ACTION - 1.0,
-                    ],
-                    dtype=np.float32,
-                )
-            else:
-                with torch.no_grad():
-                    observation_tensor = torch.as_tensor(observation, dtype=torch.float32, device=device).unsqueeze(0)
-                    action = agent.actor_mean(observation_tensor).squeeze(0).cpu().numpy()
-            observation, reward, terminated, truncated, info = env.step(action)
-            episode_return += reward
-            step_count += 1
-        records.append(
-            {
-                "policy": policy_name,
-                "scenario": scenario_index,
-                "height_change": info["height"] - initial_height,
-                "energy_height_change": info["energy_height"] - initial_energy_height,
-                "return": episode_return,
-                "steps": step_count,
-            }
-        )
+    discrete_actions = policy_name in ("Random grid", "Cruise", "DQN")
+    env = make_env(wind_manager, discrete_actions=discrete_actions)
+    try:
+        for scenario_index, scenario in enumerate(scenarios):
+            observation, info = env.reset(seed=config.EVAL_SEED + scenario_index, options=scenario)
+            initial_height = info["height"]
+            initial_energy_height = info["energy_height"]
+            episode_return = 0.0
+            step_count = 0
+            terminated = truncated = False
+            while not (terminated or truncated):
+                if policy_name == "Random grid":
+                    action = int(random_generator.integers(env.action_space.n))
+                elif policy_name == "Cruise":
+                    action = env.command_to_action(
+                        np.array(
+                            [
+                                config.DYNAMIC_BASELINE_SPEED_ACTION,
+                                config.DYNAMIC_BASELINE_ROLL_ACTION,
+                            ],
+                            dtype=np.float32,
+                        )
+                    )
+                elif policy_name == "PPO":
+                    with torch.no_grad():
+                        observation_tensor = torch.as_tensor(observation, dtype=torch.float32, device=device).unsqueeze(0)
+                        action = agent.actor_mean(observation_tensor).squeeze(0).cpu().numpy()
+                elif policy_name == "DQN":
+                    with torch.no_grad():
+                        observation_tensor = torch.as_tensor(observation, dtype=torch.float32, device=device).unsqueeze(0)
+                        action = int(agent(observation_tensor).argmax(dim=1).item())
+                else:
+                    raise ValueError(f"unsupported dynamic policy: {policy_name}")
+                observation, reward, terminated, truncated, info = env.step(action)
+                episode_return += reward
+                step_count += 1
+            records.append(
+                {
+                    "policy": policy_name,
+                    "scenario": scenario_index,
+                    "height_change": info["height"] - initial_height,
+                    "energy_height_change": info["energy_height"] - initial_energy_height,
+                    "return": episode_return,
+                    "steps": step_count,
+                }
+            )
+    finally:
         env.close()
     return records
 
 
 def save_plot(results, plot_path):
-    figure, axes = plt.subplots(1, 2, figsize=(10, 4))
+    policies = list(results["policy"].drop_duplicates())
+    colors = plt.get_cmap("tab10")(np.arange(len(policies)))
+    figure, axes = plt.subplots(1, 2, figsize=(9, 6))
     for axis, column, title in (
         (axes[0], "height_change", "Height change"),
         (axes[1], "energy_height_change", "Total-energy height change"),
     ):
-        results.boxplot(column=column, by="policy", ax=axis)
+        values_by_policy = [
+            results.loc[results["policy"] == policy, column].to_numpy()
+            for policy in policies
+        ]
+        axis.boxplot(
+            values_by_policy,
+            tick_labels=policies,
+            showfliers=False,
+            patch_artist=True,
+            boxprops={"facecolor": "none", "edgecolor": "black"},
+            medianprops={"color": "#ff7f0e", "linewidth": 2},
+        )
+        for position, policy, values, color in zip(
+            range(1, len(policies) + 1), policies, values_by_policy, colors
+        ):
+            jitter = np.linspace(-0.08, 0.08, len(values))
+            axis.scatter(
+                position + jitter,
+                values,
+                s=18,
+                alpha=0.55,
+                color=color,
+                edgecolors="white",
+                linewidths=0.4,
+                zorder=3,
+            )
+            stats_text = (
+                f"mean={np.mean(values):.1f}\n"
+                f"std={np.std(values):.1f}\n"
+                f"median={np.median(values):.1f}\n"
+                f"n={len(values)}"
+            )
+            axis.text(
+                position,
+                1.12,
+                stats_text,
+                transform=axis.get_xaxis_transform(),
+                ha="center",
+                va="bottom",
+                fontsize=11,
+                color=color,
+            )
         axis.set_title(title)
         axis.set_xlabel("")
         axis.set_ylabel("m")
     figure.suptitle("")
-    figure.tight_layout()
+    figure.tight_layout(rect=[0, 0, 1, 0.87])
     figure.savefig(plot_path, dpi=200)
     plt.close(figure)
 
@@ -125,19 +191,28 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--n", type=int, default=config.N_EVAL_EPISODES)
     parser.add_argument("--model", default=default_model_path())
+    parser.add_argument("--dqn-model", default=os.path.join(config.Q_TABLE_DIR, "dynamic_dqn_model.pth"))
     args = parser.parse_args()
     if args.n <= 0:
         raise ValueError("n must be positive")
     if not os.path.exists(args.model):
         raise FileNotFoundError(f"PPO model not found: {args.model}")
+    if not os.path.exists(args.dqn_model):
+        raise FileNotFoundError(f"dynamic DQN model not found: {args.dqn_model}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     scenarios = make_scenarios(args.n)
-    agent = load_ppo_agent(args.model, device)
-    records = []
-    records.extend(evaluate_policy("Random", scenarios))
-    records.extend(evaluate_policy("Cruise", scenarios))
-    records.extend(evaluate_policy("PPO", scenarios, agent=agent, device=device))
+    ppo_agent = load_ppo_agent(args.model, device)
+    dqn_agent = load_dynamic_dqn_agent(args.dqn_model, device)
+    wind_manager = RBWindField(dynamic_wind_paths(), memory_mode=True)
+    try:
+        records = []
+        records.extend(evaluate_policy("Random grid", scenarios, wind_manager))
+        records.extend(evaluate_policy("Cruise", scenarios, wind_manager))
+        records.extend(evaluate_policy("PPO", scenarios, wind_manager, agent=ppo_agent, device=device))
+        records.extend(evaluate_policy("DQN", scenarios, wind_manager, agent=dqn_agent, device=device))
+    finally:
+        wind_manager.close()
     results = pd.DataFrame(records)
     csv_path = default_evaluation_csv_path()
     results.to_csv(csv_path, index=False)

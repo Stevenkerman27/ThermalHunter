@@ -1,0 +1,51 @@
+# 训练
+
+统一入口是 `python train.py --algo <name>`，可选 `tabular`、`dqn`、`ppo` 和 `dynamic-dqn`。默认值来自 `config.TRAIN_ALGORITHM`。`--steps N` 对表格 Q 转发为 `--steps`，对其余算法转发为 `--total-timesteps`；`--stats N` 只传给稳态 DQN 的传感器统计阶段，`--cpu` 禁用三个神经网络训练的 CUDA。
+
+每次运行只训练一种算法。动态实验会完整加载风场文件集到内存，因而不得并行启动多个动态训练或动态评估进程。
+
+## 稳态表格 Q
+
+```powershell
+python train.py --algo tabular
+python glider_train.py --steps 1000
+```
+
+表格 Q 使用离散观测环境，Q 表形状直接由环境的 `MultiDiscrete` 观测空间和 9 动作空间确定。训练以 `SEED` 生成起始帧和 epsilon-greedy 随机流；学习率和 epsilon 在总步数的前 90% 线性变化。终止或截断转换不 bootstrap；并列最大 Q 值优先选择中性动作。最终表格和逐回合 `step, episode, return, climb` 日志分别写入 `q_table/` 和 `trainresult/`。
+
+## 稳态 DQN
+
+```powershell
+python train.py --algo dqn
+python train_dqn.py --total-timesteps 1000
+```
+
+训练开始前，`analyze_bins.collect_sensor_stats()` 用同一套起始帧规则重建传感器统计；随后创建一个 `SyncVectorEnv`，其数量必须为 1。DQN 的输入是 4 维归一化连续观测，输出 9 个控制动作的 Q 值。训练使用经验回放、epsilon-greedy、MSE TD 损失和目标网络更新；可在 GPU 上运行。
+
+默认最终模型为 `q_table/dqn_model.pth`，逐回合统计为 `trainresult/dqn_train_stats.csv`，训练曲线为 `trainresult/dqn_train_result.png`，TensorBoard 与阶段检查点写入 `runs/`。参数可显式覆盖模型、CSV、统计和图表路径，供奖励扫描隔离产物。
+
+## 动态 PPO
+
+```powershell
+python train.py --algo ppo
+python train_ppo.py --total-timesteps 1000
+```
+
+动态 PPO 在单个 `DynamicGliderEnv` 上运行。观测按两个动态传感器的固定尺度归一化；策略网络输出二维高斯动作，经 `RescaleAction` 转换后传入环境的 `[0, 1]^2` 控制语义。实现使用固定长度 rollout、GAE、裁剪策略目标和价值损失。环境数量必须为 1。
+
+默认模型、逐回合 CSV 和 TensorBoard 分别为 `q_table/ppo_dynamic_model.pth`、`trainresult/ppo_dynamic_training.csv` 和 `trainresult/ppo_runs/`。
+
+## 动态 DQN
+
+```powershell
+python train.py --algo dynamic-dqn
+python train_dynamic_dqn.py --total-timesteps 1000
+```
+
+动态 DQN 与 PPO 使用同一动态环境、观测归一化、奖励和起始帧规则，但通过 25 动作包装器选择速度与滚转命令。实现复用 DQN 的经验回放、epsilon-greedy 和 TD 学习结构，训练中每 1000 步记录 TD loss、平均 Q 值、epsilon 和吞吐率。
+
+默认模型、逐回合 CSV 和 TensorBoard 分别为 `q_table/dynamic_dqn_model.pth`、`trainresult/dynamic_dqn_training.csv` 和 `trainresult/dynamic_dqn_runs/`。
+
+## 可复现实验条件
+
+所有训练都使用 `config.SEED`，并从同一稳定帧范围随机采样，而不是锁定为同一条轨迹。稳态表格 Q 与稳态 DQN 共享风场、物理参数和奖励 `u_z + w_a * a_z`；唯一的奖励权重是 `w_a`。动态 PPO 与动态 DQN 共享动态环境条件和总能量高度增量奖励。旧模型及训练产物不属于兼容性契约。

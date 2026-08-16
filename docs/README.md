@@ -1,27 +1,27 @@
-# 滑翔机模块文档
+# ThermalHunter 文档
 
-本文档仅覆盖主滑翔机工作流，不覆盖 `practice/` 下的独立强化学习实验，也不将默认运行 `CartPole-v1` 的 `dqn.py` 视为滑翔机模块。
+本目录描述主滑翔机工作流；不覆盖 `practice/` 中独立实验，也不把默认运行 `CartPole-v1` 的 `dqn.py` 视为滑翔机训练入口。
 
-## 主链路
+## 功能地图
 
-`wind/snapshots_s*.h5` + `glider.polar` -> `glider_discrete_simp.py` -> `train.py` -> `eval.py` / `simulator.py` / 分析脚本。
+- [环境](environment.md)：输入风场、极线、稳态与动态 Gymnasium 环境的物理和接口契约。
+- [训练](training.md)：表格 Q、稳态 DQN、动态 PPO、动态 DQN 的入口、共同实验条件与产物。
+- [评估](evaluation.md)：固定随机场景下的稳态与动态策略比较。
+- [配置](config.md)：`config.py` 集中定义的可调共享参数。
+- [数据与产物](data.md)：HDF5、极线、传感器统计、模型和结果文件。
+- [工具](tools.md)：奖励权重扫描、单轨迹仿真、统计和历史工具。
 
-## 模块
+## 入口
 
-- [配置](config.md)：唯一的滑翔机全局可调参数来源。
-- [数据契约](data.md)：风场、极线、传感器统计和产物格式。
-- [环境](glider_discrete_simp.md)：风场读取、稳态气动与 Gymnasium 环境。
-- [动态环境](glider_dynamic.md)：实时空速动力学、连续控制与物理传感器。
-- [PPO 训练](train_ppo.md)：动态环境的 CleanRL 连续动作 PPO。
-- [动态评估](eval_dynamic.md)：随机、定速定滚转与 PPO 的固定场景比较。
-- [DQN 训练](train_dqn.md)：连续传感器观测的 DQN。
-- [表格型训练](glider_train.md)：离散观测的 Q-learning。
-- [统一评估](eval_all.md)：随机、表格型和 DQN 策略在固定种子生成的随机同起点场景中对比。
-- [奖励权重扫描](reward_sweep.md)：串行训练 `1:1`、`1:3`、`1:5` 的表格 Q 和 DQN，并汇总固定场景评估。
-- [轨迹仿真](simulator.md)：单一策略的交互式结果绘制。
-- [分析工具](analysis_tools.md)：传感器统计、模型、策略和风场可视化。
-- [旧策略生成器](make_pkl.md)：与当前分箱契约不兼容的历史工具。
+从项目根目录运行：
 
-## 运行环境
+```powershell
+python train.py --algo tabular
+python train.py --algo dqn
+python train.py --algo ppo
+python train.py --algo dynamic-dqn
+python eval.py
+python eval.py --dynamic
+```
 
-使用项目约定的 `myml` Conda 环境。默认训练为 `python train.py`；`python train.py --algo dqn` 选择 DQN，`python eval.py` 执行固定种子随机评估。所有脚本均从项目根目录启动，以保证相对路径和生成物位置正确。
+稳态和动态实验的物理模型、观测、动作和奖励不同，只在各自环境内比较算法。所有共享配置只在 `config.py` 中定义。

@@ -1,28 +1,24 @@
-# 数据契约
+# 数据与产物
 
-## 风场
+## 输入
 
-输入位于 `wind/snapshots_s*.h5`，按 `config.natural_key` 的自然序串联。`RBWindField` 读取：
+风场文件位于 `wind/snapshots_s*.h5`，按自然序拼接。每个文件必须含有：
 
-- `tasks/ux`、`tasks/uy`、`tasks/uz`：四维数组 `(T, X, Y, Z)`。
-- `tasks/buoyancy`：同样的网格布局，供 `plotwind.py` 绘制切片。
-- `tasks/ux.dims[0]['sim_time']`：每帧的物理时间。
+- `tasks/ux`、`tasks/uy`、`tasks/uz`：形状为 `(T, X, Y, Z)` 的速度场。
+- `tasks/buoyancy`：同一网格布局，供 `plotwind.py` 使用。
+- `tasks/ux.dims[0]['sim_time']`：帧时间坐标。
 
-环境坐标以 `config.DOMAIN_SIZE` 的物理坐标表示；水平 `x/y` 在环境中周期回绕，高度不回绕。
-
-## 气动极线
-
-`glider.polar` 由 `GliderPhysics` 读取，必须含 `AoA`、`CL`、`CDtot` 列。`config.POLAR_BASE` 不带扩展名，环境据此拼接 `.polar`。
+环境把 `config.DOMAIN_SIZE` 映射到网格坐标；`x/y` 周期回绕，高度由环境边界规则处理。`glider.polar` 必须有 `AoA`、`CL` 和 `CDtot` 列，且 `config.POLAR_BASE` 不带扩展名。
 
 ## 传感器统计
 
-`analyze_bins.py` 产生根目录 `sensor_stats.json`。DQN 训练会先自动重建它；DQN 归一化与评估需要其中的 `w_accel.mean/std` 与 `delta_w.mean/std`，缺失时直接报错。
+`sensor_stats.json` 存在项目根目录，含 `w_accel.mean/std` 与 `delta_w.mean/std`。稳态 DQN 训练会先重建该文件，随后训练和评估都用它归一化连续传感器。统计不存在或标准差为零时，生成或加载环节会报错。
 
-## 模型与结果
+## 模型和结果
 
-- 表格型策略：pickle，形状为 `(AOA_BINS, BANK_BINS, 3, 3, 9)`；最终模型为 `config.SAVE_PATH`。
-- DQN 权重：PyTorch `state_dict`，输入维度为 4、动作数为 9；最终模型为 `config.DQN_SAVE_PATH`。
-- 动态 PPO 权重：PyTorch `state_dict`，输入为归一化后的 2 个动态传感器，网络侧动作为 2 维 `[-1, 1]`；Gymnasium 包装器将其转换为环境控制的 `[0, 1]^2`。
-- 训练结果：`trainresult/`；动态 PPO 的 TensorBoard 日志位于 `trainresult/ppo_runs/`，旧 DQN 的检查点位于 `runs/`。
+- 稳态表格 Q：pickle，形状由当前稳态离散观测与 9 动作空间决定，默认最终模型为 `q_table/q_table_v0.pkl`。
+- 稳态 DQN：PyTorch `state_dict`，输入 4 维归一化观测、输出 9 个 Q 值，默认最终模型为 `q_table/dqn_model.pth`。
+- 动态 PPO：PyTorch `state_dict`，输入 2 维归一化动态观测，网络动作是 2 维 `[-1, 1]`，包装器再映射到环境的 `[0, 1]^2`。
+- 动态 DQN：PyTorch `state_dict`，输入 2 维归一化动态观测、输出 `DYNAMIC_DQN_ACTION_LEVELS ** 2` 个 Q 值。
 
-`test_wind_reading.py` 是手工诊断脚本，不是 pytest 测试。它验证跨 HDF5 文件的时间索引与插值读取；其示例域大小和坐标与主配置不同，不能据此验证主环境的物理尺度。
+训练 CSV、评估 CSV、图表和 TensorBoard 日志均写入项目内的 `trainresult/`、`runs/` 或 `q_table/`；各模块的默认文件名见[训练](training.md)和[评估](evaluation.md)。现有模型和产物不要求与后续代码兼容。

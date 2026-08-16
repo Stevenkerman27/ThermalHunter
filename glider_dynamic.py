@@ -9,20 +9,30 @@ from glider_discrete_simp import RBWindField, GliderPhysics, compute_wind_amplif
 
 
 class DynamicGliderEnv(gym.Env):
-    """Non-steady point-mass glider environment for continuous-control PPO."""
+    """Non-steady point-mass glider environment with continuous controls."""
 
     metadata = {"render_modes": []}
 
     def __init__(
         self,
-        h5_paths,
+        h5_paths=None,
         polar_file_base=config.POLAR_BASE,
         domain_size=config.DOMAIN_SIZE,
         memory_mode=False,
+        wind_manager=None,
     ):
         super().__init__()
         self.domain_size = np.asarray(domain_size, dtype=np.float64)
-        self.wind_manager = RBWindField(h5_paths, domain_size=domain_size, memory_mode=memory_mode)
+        if wind_manager is None:
+            if h5_paths is None:
+                raise ValueError("h5_paths is required when wind_manager is not supplied")
+            self.wind_manager = RBWindField(h5_paths, domain_size=domain_size, memory_mode=memory_mode)
+            self._owns_wind_manager = True
+        else:
+            if h5_paths is not None:
+                raise ValueError("provide either h5_paths or wind_manager, not both")
+            self.wind_manager = wind_manager
+            self._owns_wind_manager = False
         self.physics = GliderPhysics(polar_file_base)
         self.wind_ampf = compute_wind_amplification(self.wind_manager, self.physics)
 
@@ -218,4 +228,34 @@ class DynamicGliderEnv(gym.Env):
         return self._get_obs(), float(reward), terminated, truncated, self._info(reward)
 
     def close(self):
-        self.wind_manager.close()
+        if self._owns_wind_manager:
+            self.wind_manager.close()
+
+
+class DynamicDiscreteActionWrapper(gym.ActionWrapper):
+    """Map a Cartesian grid of speed and roll commands onto dynamic controls."""
+
+    def __init__(self, env, action_levels=config.DYNAMIC_DQN_ACTION_LEVELS):
+        super().__init__(env)
+        if action_levels < 2:
+            raise ValueError("dynamic DQN requires at least two action levels")
+        self.action_levels = action_levels
+        self.command_values = np.linspace(0.0, 1.0, action_levels, dtype=np.float32)
+        self.action_space = spaces.Discrete(action_levels * action_levels)
+
+    def action(self, action):
+        if not self.action_space.contains(action):
+            raise ValueError(f"dynamic discrete action must be in [0, {self.action_space.n})")
+        action_index = int(action)
+        speed_index, roll_index = divmod(action_index, self.action_levels)
+        return np.array(
+            [self.command_values[speed_index], self.command_values[roll_index]],
+            dtype=np.float32,
+        )
+
+    def command_to_action(self, command):
+        command = np.asarray(command, dtype=np.float32)
+        if command.shape != (2,) or np.any(command < 0.0) or np.any(command > 1.0):
+            raise ValueError("dynamic command must have shape (2,) and values in [0, 1]")
+        indices = np.rint(command * (self.action_levels - 1)).astype(int)
+        return int(indices[0] * self.action_levels + indices[1])

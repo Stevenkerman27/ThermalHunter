@@ -103,7 +103,7 @@ def dynamic_wind_paths():
 
 def make_env(seed, capture_video, run_name):
     def thunk():
-        env = DynamicGliderEnv(dynamic_wind_paths(), memory_mode=False)
+        env = DynamicGliderEnv(dynamic_wind_paths(), memory_mode=True)
         env = DynamicObservationWrapper(env)
         env = gym.wrappers.RescaleAction(
             env,
