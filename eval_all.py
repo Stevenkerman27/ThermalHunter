@@ -1,3 +1,4 @@
+import argparse
 import numpy as np
 import gymnasium as gym
 import torch
@@ -8,7 +9,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 import config
-from glider_discrete_simp import GliderEnv, RBWindField, GliderPhysics
+from glider_discrete_simp import RBWindField, GliderPhysics, compute_wind_amplification
+from glider_train import greedy_tabular_action
 from train_dqn import QNetwork, normalize_state
 
 def get_tabular_obs(env, phy_state, aoa_idx, bank_idx, w_accel, delta_w, last_idx_az, last_idx_dw):
@@ -21,10 +23,11 @@ def get_tabular_obs(env, phy_state, aoa_idx, bank_idx, w_accel, delta_w, last_id
     return np.array([aoa_idx, bank_idx, idx_az, idx_dw], dtype=np.int32), idx_az, idx_dw
 
 class MultiGliderEvaluator:
-    def __init__(self, h5_file_paths):
-        # 1. Initialize Wind Field (Shared)
-        self.wind_manager = RBWindField(h5_file_paths, domain_size=config.DOMAIN_SIZE, memory_mode=True)
+    def __init__(self, h5_file_paths, reward_w_accel=config.REWARD_W_ACCEL_WEIGHT):
+        self.wind_manager = RBWindField(h5_file_paths, domain_size=config.DOMAIN_SIZE, memory_mode=False)
         self.physics = GliderPhysics(config.POLAR_BASE)
+        self.wind_ampf = compute_wind_amplification(self.wind_manager, self.physics)
+        self.reward_w_accel = reward_w_accel
         
         # 2. Precompute physics tables (Normal & Drag-Penalty)
         self._precompute_physics()
@@ -43,13 +46,13 @@ class MultiGliderEvaluator:
                 v_tas_d, gamma_d, dchi_dt_d = self.physics.get_steady_state(aoa_rad, bank_rad, drag_mult=config.CONTROL_DRAG_MULTIPLIER)
                 self.physics_table_drag[a_idx, b_idx] = [v_tas_d, gamma_d, dchi_dt_d]
 
-    def reset_episode(self, reset_time):
+    def reset_episode(self, reset_time, rng):
         self.wind_manager.reset(reset_time)
         
         # Initial state (Same for all 3 gliders)
-        x, y = np.random.uniform(0.2, 0.8, size=2) * config.DOMAIN_SIZE[:2]
-        z = np.random.uniform(0.2, 0.6) * config.DOMAIN_SIZE[2]
-        init_dir = np.random.uniform(0, 2*np.pi)
+        x, y = rng.uniform(0.2, 0.8, size=2) * config.DOMAIN_SIZE[:2]
+        z = rng.uniform(0.2, 0.6) * config.DOMAIN_SIZE[2]
+        init_dir = rng.uniform(0, 2*np.pi)
         
         # [phy_state, aoa_idx, bank_idx, w_accel, delta_w, last_idx_az, last_idx_dw, done, h_start, ep_reward]
         self.gliders = []
@@ -110,12 +113,11 @@ class MultiGliderEvaluator:
             
             sum_w_accel = 0.0
             sum_delta_w = 0.0
-            z_old = g["phy_state"][2]
             
             # Physics loop
             for _ in range(config.N_PHYS_PER_RL):
                 x, y, z, chi = g["phy_state"]
-                w_vec_start = self.wind_manager.get_wind(x, y, z) * config.WIND_AMPF
+                w_vec_start = self.wind_manager.get_wind(x, y, z) * self.wind_ampf
                 
                 dt = config.DT_RL / config.N_PHYS_PER_RL
                 dx = (v_tas * np.cos(gamma) * np.cos(chi) + w_vec_start[0]) * dt
@@ -127,7 +129,7 @@ class MultiGliderEvaluator:
                 g["phy_state"][2] += dz
                 g["phy_state"][3] = (chi + dchi_dt * dt) % (2 * np.pi)
                 
-                w_vec_end = self.wind_manager.get_wind(*g["phy_state"][:3]) * config.WIND_AMPF
+                w_vec_end = self.wind_manager.get_wind(*g["phy_state"][:3]) * self.wind_ampf
                 sum_w_accel += (w_vec_end[2] - w_vec_start[2]) / dt
                 
                 side_vec = np.array([np.sin(chi), -np.cos(chi), 0])
@@ -138,8 +140,8 @@ class MultiGliderEvaluator:
                 pos_l[:2] %= config.DOMAIN_SIZE[:2]
                 pos_l[2] = np.clip(pos_l[2], 0, config.DOMAIN_SIZE[2] - 0.01)
                 
-                w_r = self.wind_manager.get_wind(*pos_r)[2] * config.WIND_AMPF
-                w_l = self.wind_manager.get_wind(*pos_l)[2] * config.WIND_AMPF
+                w_r = self.wind_manager.get_wind(*pos_r)[2] * self.wind_ampf
+                w_l = self.wind_manager.get_wind(*pos_l)[2] * self.wind_ampf
                 sum_delta_w += (w_r - w_l)
                 
                 if (g["phy_state"][2] <= config.DOMAIN_SIZE[2] * 0.1) or (g["phy_state"][2] >= config.DOMAIN_SIZE[2] * 0.9):
@@ -151,9 +153,8 @@ class MultiGliderEvaluator:
             g["delta_w"] = sum_delta_w / config.N_PHYS_PER_RL
             
             # Reward (Optional for evaluation but kept for consistency)
-            current_uz = self.wind_manager.get_wind(*g["phy_state"][:3])[2] * config.WIND_AMPF
-            height_change = g["phy_state"][2] - z_old
-            g["ep_reward"] += current_uz + 5* g["w_accel"] + config.REWARD_SURVIVE + height_change * config.REWARD_LAMBDA
+            current_uz = self.wind_manager.get_wind(*g["phy_state"][:3])[2] * self.wind_ampf
+            g["ep_reward"] += current_uz + self.reward_w_accel * g["w_accel"]
             g["h_final"] = g["phy_state"][2]
 
         # Sync Wind Step
@@ -237,7 +238,7 @@ def plot_climb_results(rnd_climbs, exp_climbs, save_path="trainresult/climb_eval
         mean_val = np.mean(data_list[i])
         std_val = np.std(data_list[i])
         y_pos = max(data_list[i]) + (max(df['Climb']) - min(df['Climb'])) * 0.05
-        text_str = f"$\mu={mean_val:.1f}$\n$\sigma={std_val:.1f}$"
+        text_str = f"$\\mu={mean_val:.1f}$\n$\\sigma={std_val:.1f}$"
         plt.text(i, y_pos, text_str, ha='center', va='bottom', 
                  fontsize=16, fontweight='bold', color=my_colors[p])
         
@@ -280,7 +281,7 @@ def plot_multi_climb_results(results, save_path="trainresult/compare_eval_result
         mean_val = np.mean(climbs)
         std_val = np.std(climbs)
         y_pos = df['Climb'].max() + (df['Climb'].max() - df['Climb'].min()) * 0.05
-        text_str = f"$\mu={mean_val:.1f}$\n$\sigma={std_val:.1f}$"
+        text_str = f"$\\mu={mean_val:.1f}$\n$\\sigma={std_val:.1f}$"
         plt.text(i, y_pos, text_str, ha='center', va='bottom', 
                  fontsize=18, fontweight='bold', color=my_colors[policy])
         
@@ -294,29 +295,36 @@ def plot_multi_climb_results(results, save_path="trainresult/compare_eval_result
     
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path, dpi=300)
+    plt.close()
     print(f"Comparison plot saved to {save_path}")
-    plt.show()
 
-if __name__ == "__main__":
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--tabular-model", default=config.SAVE_PATH)
+    parser.add_argument("--dqn-model", default=config.DQN_SAVE_PATH)
+    parser.add_argument("--sensor-stats", default=os.path.join(config.BASE_DIR, "sensor_stats.json"))
+    parser.add_argument("--w-accel-weight", type=float, default=config.REWARD_W_ACCEL_WEIGHT)
+    parser.add_argument("--output-csv", default=os.path.join(config.TRAIN_RESULT_DIR, "evaluation_episodes.csv"))
+    parser.add_argument("--output-plot", default=os.path.join(config.TRAIN_RESULT_DIR, "compare_eval_result.png"))
+    args = parser.parse_args()
+
     # --- 1. Load Models ---
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Load Tabular Q-Table
-    if os.path.exists(config.SAVE_PATH):
-        with open(config.SAVE_PATH, "rb") as f:
-            q_table = pickle.load(f)
-        print(f"Loaded Tabular Q-Table from {config.SAVE_PATH}")
-    else:
-        print("Warning: Q-Table not found. Tabular policy will be random.")
-        q_table = np.zeros((config.AOA_BINS, config.BANK_BINS, 3, 3, 9))
+    if not os.path.exists(args.tabular_model):
+        raise FileNotFoundError(f"tabular model not found: {args.tabular_model}")
+    with open(args.tabular_model, "rb") as f:
+        q_table = pickle.load(f)
+    print(f"Loaded Tabular Q-Table from {args.tabular_model}")
 
     # --- 2. Initialize Evaluator ---
     h5_files = sorted(glob.glob(os.path.join(config.WIND_DIR, 'snapshots_s*.h5')), key=config.natural_key)
-    evaluator = MultiGliderEvaluator(h5_files)
+    evaluator = MultiGliderEvaluator(h5_files, args.w_accel_weight)
     
     # Load Sensor Stats for DQN Normalization
     from train_dqn import load_sensor_stats
-    sensor_stats = load_sensor_stats()
+    sensor_stats = load_sensor_stats(args.sensor_stats)
     if sensor_stats:
         print("Loaded Sensor Stats for DQN normalization.")
     else:
@@ -327,33 +335,35 @@ if __name__ == "__main__":
     action_dim = 9
 
     dqn_model = QNetwork(state_dim, action_dim).to(device)
-    if os.path.exists(config.DQN_SAVE_PATH):
-        dqn_model.load_state_dict(torch.load(config.DQN_SAVE_PATH, map_location=device))
-        dqn_model.eval()
-        print(f"Loaded DQN Model from {config.DQN_SAVE_PATH}")
-    else:
-        print("Warning: DQN Model not found.")
+    if not os.path.exists(args.dqn_model):
+        raise FileNotFoundError(f"DQN model not found: {args.dqn_model}")
+    dqn_model.load_state_dict(torch.load(args.dqn_model, map_location=device))
+    dqn_model.eval()
+    print(f"Loaded DQN Model from {args.dqn_model}")
 
     
     n_episodes = config.N_EVAL_EPISODES
     results = {"Random": [], "Tabular Q": [], "DQN": []}
+    scenario_rng = np.random.default_rng(config.EVAL_SEED)
+    start_frames = [config.sample_start_frame(scenario_rng) for _ in range(n_episodes)]
     
     print(f"Starting parallel evaluation over {n_episodes} episodes...")
     import time
     start_time = time.time()
 
-    for ep in range(n_episodes):
-        reset_time = np.random.randint(config.RESET_TIME_MIN, config.RESET_TIME_MAX)
-        obs_list = evaluator.reset_episode(reset_time)
+    for ep, reset_time in enumerate(start_frames):
+        episode_rng = np.random.default_rng(config.EVAL_SEED + ep)
+        random_action_rng = np.random.default_rng(config.EVAL_SEED + n_episodes + ep)
+        obs_list = evaluator.reset_episode(reset_time, episode_rng)
         
         while True:
             actions = []
             # Random action
-            actions.append(np.random.randint(0, 9))
+            actions.append(random_action_rng.integers(0, 9))
             
             # Tabular action
             if obs_list[1] is not None:
-                actions.append(np.argmax(q_table[tuple(obs_list[1])]))
+                actions.append(greedy_tabular_action(q_table[tuple(obs_list[1])]))
             else:
                 actions.append(0) # placeholder
                 
@@ -381,5 +391,12 @@ if __name__ == "__main__":
     for policy, climbs in results.items():
         print(f"{policy}: Mean Climb = {np.mean(climbs):.1f}m, Std = {np.std(climbs):.1f}m")
     
-    plot_multi_climb_results(results)
+    pd.DataFrame({"start_frame": start_frames, **results}).to_csv(
+        args.output_csv, index=False
+    )
+    plot_multi_climb_results(results, args.output_plot)
     evaluator.wind_manager.close()
+
+
+if __name__ == "__main__":
+    main()

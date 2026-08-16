@@ -117,13 +117,24 @@ class RBWindField:
             trilinear(dsets['uz'][slices].squeeze(), dx, dy, dz)
         ])
 
+    def vector_rms(self):
+        total_squared_speed = 0.0
+        component_count = 0
+        for dsets in self.dsets_list:
+            for component in ('ux', 'uy', 'uz'):
+                values = dsets[component][:]
+                total_squared_speed += np.square(values, dtype=np.float64).sum()
+                component_count += values.size
+        if component_count == 0:
+            raise ValueError("wind field contains no velocity samples")
+        return float(np.sqrt(total_squared_speed / component_count))
+
     def close(self):
-            for f in self.files: 
-                f.close()
-            # 清空内存中存储的巨大风场数组
-            self.dsets_list.clear()
-            import gc
-            gc.collect()
+        for f in self.files:
+            f.close()
+        self.dsets_list.clear()
+        import gc
+        gc.collect()
 
 class GliderPhysics:
     def __init__(self, polar_file_base, mass=config.MASS, area=config.AREA):
@@ -134,7 +145,7 @@ class GliderPhysics:
         polar_name = case_name + ".polar"
         base_dir = os.path.dirname(os.path.abspath(__file__))
         full_path = os.path.join(base_dir, polar_name)
-        df = pd.read_csv(full_path, sep='\s+')
+        df = pd.read_csv(full_path, sep=r'\s+')
         return {
             "Cl": interp1d(df['AoA'], df['CL'], kind='linear', fill_value="extrapolate"),
             "Cd": interp1d(df['AoA'], df['CDtot'], kind='linear', fill_value="extrapolate")
@@ -158,6 +169,15 @@ class GliderPhysics:
         dchi_dt = y_acc / v_tas / np.cos(gamma_rad)
         
         return v_tas, gamma_rad, dchi_dt
+
+
+def compute_wind_amplification(wind_manager, physics):
+    median_aoa_deg = config.AOA_MIN_DEG + (config.AOA_BINS // 2) * config.AOA_STEP_DEG
+    typical_tas, _, _ = physics.get_steady_state(np.deg2rad(median_aoa_deg), 0.0)
+    wind_rms = wind_manager.vector_rms()
+    if wind_rms <= 0.0:
+        raise ValueError("wind field RMS must be positive")
+    return config.WIND_RMS_TO_TAS_RATIO * typical_tas / wind_rms
 
 class GliderEnv(gym.Env):
     # --- Centralized RL Configuration (From config.py) ---
@@ -184,8 +204,8 @@ class GliderEnv(gym.Env):
 
     def __init__(self, h5_file_path, polar_file_base, domain_size=config.DOMAIN_SIZE, 
                  dt_rl=config.DT_RL, n_phys_per_rl=config.N_PHYS_PER_RL, rl_steps_per_frame=config.RL_STEPS_PER_FRAME, 
-                 wind_ampf=config.WIND_AMPF, hysteresis_pct=config.HYSTERESIS_PCT, random_init=True, 
-                 reward_lambda=config.REWARD_LAMBDA, memory_mode=True, continuous_obs=False):
+                 wind_ampf=None, hysteresis_pct=config.HYSTERESIS_PCT, random_init=True,
+                 reward_w_accel=config.REWARD_W_ACCEL_WEIGHT, memory_mode=False, continuous_obs=False):
         super().__init__()
         self.wind_manager = RBWindField(h5_file_path, domain_size=domain_size, memory_mode=memory_mode)
         self.physics = GliderPhysics(polar_file_base)
@@ -199,9 +219,10 @@ class GliderEnv(gym.Env):
         self.rl_steps_per_frame = rl_steps_per_frame   # 多少个RL step更新一次风场数据帧
         self.dt_integration = dt_rl / n_phys_per_rl    # 每次物理积分的实际Delta T
         
-        self.wind_ampf = wind_ampf
+        self.wind_ampf = compute_wind_amplification(self.wind_manager, self.physics) if wind_ampf is None else wind_ampf
+        print(f"Wind amplification: {self.wind_ampf:.6f} (target RMS/TAS={config.WIND_RMS_TO_TAS_RATIO:.3f})")
         self.b = config.WINGSPAN
-        self.reward_survive = config.REWARD_SURVIVE
+        self.reward_w_accel = reward_w_accel
         self.rl_step_counter = 0                       # 用于追踪RL步数以更新风场
 
         # 动作与观测空间
@@ -218,8 +239,6 @@ class GliderEnv(gym.Env):
             self.observation_space = spaces.MultiDiscrete([self.AOA_BINS, self.BANK_BINS, 3, 3])
 
         self.hysteresis_pct = hysteresis_pct
-        self.reward_lambda = reward_lambda
-        
         # 用于记录上一次的分箱索引，实现施密特触发器逻辑
         self.last_idx_az = None
         self.last_idx_dw = None
@@ -272,7 +291,6 @@ class GliderEnv(gym.Env):
         sum_delta_w = 0.0
         terminated = False
         truncated = False
-        z_old = self.phy_state[2]
 
         # --- 物理积分循环 ---
         # 在这 n_phys_per_rl 步中，风场帧保持不变
@@ -328,8 +346,7 @@ class GliderEnv(gym.Env):
         
         # 奖励计算
         current_uz = self.wind_manager.get_wind(*self.phy_state[:3])[2] * self.wind_ampf
-        height_change = self.phy_state[2] - z_old
-        reward = current_uz + 5* self.w_accel + self.reward_survive + height_change * self.reward_lambda
+        reward = current_uz + self.reward_w_accel * self.w_accel
 
         info = {
             "w_accel": self.w_accel, 
@@ -398,5 +415,5 @@ class GliderEnv(gym.Env):
         return np.array([self.aoa_idx, self.bank_idx, self.last_idx_az, self.last_idx_dw], dtype=np.int32)
     
     def close(self):
-            if hasattr(self, 'wind_manager'):
-                self.wind_manager.close()
+        if hasattr(self, 'wind_manager'):
+            self.wind_manager.close()

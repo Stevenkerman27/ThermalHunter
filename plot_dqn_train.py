@@ -70,8 +70,8 @@ def plot_dqn_training(csv_path=None, save_path=None):
         save_path = os.path.join(config.TRAIN_RESULT_DIR, "dqn_train_result.png")
     
     plt.savefig(save_path, dpi=300)
+    plt.close(fig)
     print(f"Training plot saved to {save_path}")
-    plt.show()
 
 if __name__ == "__main__":
     plot_dqn_training()

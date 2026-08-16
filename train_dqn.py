@@ -5,6 +5,7 @@ import time
 import json
 import glob
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import gymnasium as gym
 import numpy as np
@@ -15,9 +16,43 @@ import torch.optim as optim
 import tyro
 from torch.utils.tensorboard import SummaryWriter
 
-from cleanrl_utils.buffers import ReplayBuffer
 import config
 from glider_discrete_simp import GliderEnv
+
+
+class ReplayBuffer:
+    def __init__(self, capacity, observation_space, action_space, device):
+        self.capacity = capacity
+        self.device = device
+        self.observations = np.empty((capacity, *observation_space.shape), dtype=np.float32)
+        self.next_observations = np.empty((capacity, *observation_space.shape), dtype=np.float32)
+        self.actions = np.empty((capacity,), dtype=np.int64)
+        self.rewards = np.empty((capacity,), dtype=np.float32)
+        self.dones = np.empty((capacity,), dtype=np.float32)
+        self.position = 0
+        self.size = 0
+
+    def add(self, observations, next_observations, actions, rewards, dones):
+        for index in range(len(actions)):
+            self.observations[self.position] = observations[index]
+            self.next_observations[self.position] = next_observations[index]
+            self.actions[self.position] = actions[index]
+            self.rewards[self.position] = rewards[index]
+            self.dones[self.position] = dones[index]
+            self.position = (self.position + 1) % self.capacity
+            self.size = min(self.size + 1, self.capacity)
+
+    def sample(self, batch_size):
+        if self.size < batch_size:
+            raise ValueError("replay buffer does not contain a full batch")
+        indices = np.random.randint(0, self.size, size=batch_size)
+        return SimpleNamespace(
+            observations=torch.as_tensor(self.observations[indices], device=self.device),
+            next_observations=torch.as_tensor(self.next_observations[indices], device=self.device),
+            actions=torch.as_tensor(self.actions[indices], device=self.device).reshape(-1, 1),
+            rewards=torch.as_tensor(self.rewards[indices], device=self.device),
+            dones=torch.as_tensor(self.dones[indices], device=self.device),
+        )
 
 # --- Environment Registration ---
 try:
@@ -35,32 +70,27 @@ try:
 except Exception:
     pass 
 
-def normalize_state(state, sensor_stats=None):
+def normalize_state(state, sensor_stats):
     s = state.copy().astype(np.float32)
     # aoa_idx, bank_idx normalization to ~[-1, 1]
     s[0] = (s[0] - (config.AOA_BINS / 2)) / (config.AOA_BINS / 2)
     s[1] = (s[1] - (config.BANK_BINS / 2)) / (config.BANK_BINS / 2)
     
-    if sensor_stats:
-        s[2] = (s[2] - sensor_stats["w_accel"]["mean"]) / sensor_stats["w_accel"]["std"]
-        s[3] = (s[3] - sensor_stats["delta_w"]["mean"]) / sensor_stats["delta_w"]["std"]
-    else:
-        # Fallback to broad scaling if stats not provided
-        s[2] *= 3.0 
-        s[3] *= 4.0
+    s[2] = (s[2] - sensor_stats["w_accel"]["mean"]) / sensor_stats["w_accel"]["std"]
+    s[3] = (s[3] - sensor_stats["delta_w"]["mean"]) / sensor_stats["delta_w"]["std"]
     return s
 
-def load_sensor_stats():
-    stats_path = os.path.join(config.BASE_DIR, "sensor_stats.json")
-    if os.path.exists(stats_path):
-        with open(stats_path, "r") as f:
-            return json.load(f)
-    return None
+def load_sensor_stats(stats_path=None):
+    stats_path = os.path.join(config.BASE_DIR, "sensor_stats.json") if stats_path is None else stats_path
+    if not os.path.exists(stats_path):
+        raise FileNotFoundError(f"sensor statistics not found: {stats_path}")
+    with open(stats_path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 class GliderWrapper(gym.Wrapper):
-    def __init__(self, env):
+    def __init__(self, env, sensor_stats_path=None):
         super().__init__(env)
-        self.sensor_stats = load_sensor_stats()
+        self.sensor_stats = load_sensor_stats(sensor_stats_path)
         
         # Define the observation space after normalization
         # Obs: [aoa, bank, w_accel, delta_w]
@@ -73,7 +103,7 @@ class GliderWrapper(gym.Wrapper):
             kwargs["options"] = {}
         # Inject random resettime if not provided
         if "resettime" not in kwargs["options"]:
-            kwargs["options"]["resettime"] = np.random.randint(config.RESET_TIME_MIN, config.RESET_TIME_MAX)
+            kwargs["options"]["resettime"] = config.sample_start_frame(np.random)
         obs, info = self.env.reset(**kwargs)
         return normalize_state(obs, self.sensor_stats), info
 
@@ -85,7 +115,7 @@ class GliderWrapper(gym.Wrapper):
 class Args:
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
     """the name of this experiment"""
-    seed: int = 1
+    seed: int = config.SEED
     """seed of the experiment"""
     torch_deterministic: bool = True
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
@@ -139,13 +169,25 @@ class Args:
     """timestep to start learning"""
     train_frequency: int = config.DQN_TRAIN_FREQ
     """the frequency of training"""
+    sensor_stats_episodes: int = config.SENSOR_STATS_EPISODES
+    """random episodes used to build sensor normalization statistics"""
+    reward_w_accel: float = config.REWARD_W_ACCEL_WEIGHT
+    """vertical wind acceleration reward coefficient"""
+    model_path: str = ""
+    """final model path; empty uses the default path"""
+    log_path: str = ""
+    """training CSV path; empty uses the default path"""
+    sensor_stats_path: str = ""
+    """sensor-statistics path; empty uses the default path"""
+    training_plot_path: str = ""
+    """training-plot path; empty uses the default path"""
 
 
-def make_env(env_id, seed, idx, capture_video, run_name, memory_mode=False):
+def make_env(env_id, seed, idx, capture_video, run_name, reward_w_accel, sensor_stats_path, memory_mode=False):
     def thunk():
-        env = gym.make(env_id, memory_mode=memory_mode)
+        env = gym.make(env_id, memory_mode=memory_mode, reward_w_accel=reward_w_accel)
         
-        env = GliderWrapper(env)
+        env = GliderWrapper(env, sensor_stats_path)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.action_space.seed(seed)
 
@@ -178,6 +220,8 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
 if __name__ == "__main__":
     args = tyro.cli(Args)
     assert args.num_envs == 1, "vectorized envs are not supported at the moment"
+    if args.reward_w_accel <= 0:
+        raise ValueError("reward_w_accel must be positive")
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
         import wandb
@@ -202,12 +246,28 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
+    torch.set_num_threads(config.DQN_TORCH_THREADS)
+
+    from analyze_bins import collect_sensor_stats
+    sensor_stats_path = args.sensor_stats_path or os.path.join(config.BASE_DIR, "sensor_stats.json")
+    collect_sensor_stats(args.sensor_stats_episodes, sensor_stats_path)
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, args.seed + i, i, args.capture_video, run_name) for i in range(args.num_envs)]
+        [
+            make_env(
+                args.env_id,
+                args.seed + i,
+                i,
+                args.capture_video,
+                run_name,
+                args.reward_w_accel,
+                sensor_stats_path,
+            )
+            for i in range(args.num_envs)
+        ]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
@@ -234,7 +294,7 @@ if __name__ == "__main__":
     start_time = time.time()
 
     import csv
-    log_file_path = os.path.join(config.TRAIN_RESULT_DIR, "dqn_train_stats.csv")
+    log_file_path = args.log_path or os.path.join(config.TRAIN_RESULT_DIR, "dqn_train_stats.csv")
     log_file = open(log_file_path, "w", newline="")
     log_writer = csv.writer(log_file)
     log_writer.writerow(["step", "return", "climb"])
@@ -313,7 +373,7 @@ if __name__ == "__main__":
                 if final_obs is not None:
                     real_next_obs[idx] = final_obs[idx]
         
-        rb.add(obs, real_next_obs, actions, rewards, terminations)
+        rb.add(obs, real_next_obs, actions, rewards, np.logical_or(terminations, truncations))
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
@@ -356,9 +416,11 @@ if __name__ == "__main__":
                 
                 # Additionally save the final model to the global path
                 if (global_step + 1) == args.total_timesteps:
-                    torch.save(q_network.state_dict(), config.DQN_SAVE_PATH)
-                    print(f"Final model also saved to global path: {config.DQN_SAVE_PATH}")
+                    final_model_path = args.model_path or config.DQN_SAVE_PATH
+                    torch.save(q_network.state_dict(), final_model_path)
+                    print(f"Final model saved to: {final_model_path}")
 
+    log_file.close()
     envs.close()
     del rb
     import gc
@@ -366,33 +428,12 @@ if __name__ == "__main__":
     if device.type == "cuda":
         torch.cuda.empty_cache()
 
-    if args.save_model:
-        # Manual evaluation to ensure memory control
-        print("Starting evaluation...")
-        q_network.eval()
-        eval_env = make_env(args.env_id, args.seed + 100, 0, False, f"{run_name}-eval", memory_mode=False)()
-        episodic_returns = []
-        for i in range(10):
-            obs, _ = eval_env.reset()
-            done = False
-            episodic_return = 0
-            while not done:
-                with torch.no_grad():
-                    q_values = q_network(torch.Tensor(obs).to(device).unsqueeze(0))
-                    action = torch.argmax(q_values, dim=1).item()
-                obs, reward, terminated, truncated, info = eval_env.step(action)
-                episodic_return += reward
-                done = terminated or truncated
-            episodic_returns.append(episodic_return)
-            print(f"Eval episode {i}: return={episodic_return:.2f}")
-            writer.add_scalar("eval/episodic_return", episodic_return, i)
-        
-        eval_env.close()
-        print("Evaluation finished and eval_env closed.")
-
     writer.close()
 
     # --- Plotting Training Curve (External Script) ---
-    from plot_dqn_train import plot_dqn_training
-    plot_dqn_training()
+    if all_climbs:
+        from plot_dqn_train import plot_dqn_training
+        plot_dqn_training(log_file_path, args.training_plot_path or None)
+    else:
+        print("No completed episodes; skipped DQN training plot.")
 

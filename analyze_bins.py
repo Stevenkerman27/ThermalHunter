@@ -1,112 +1,53 @@
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from glider_discrete_simp import GliderEnv
-import os
 import glob
-import config
 import json
+import os
 
-# --- 1. 配置环境 ---
-h5_files = sorted(glob.glob(os.path.join(config.WIND_DIR, 'snapshots_s*.h5')))
+import numpy as np
 
-if not h5_files:
-    print(f"Error: No wind files found in '{config.WIND_DIR}' directory.")
-    exit()
+import config
+from glider_discrete_simp import GliderEnv
 
-# 使用 memory_mode=False 进入“磁盘按需读取”模式 (低内存占用)
-env = GliderEnv(h5_file_path=h5_files, polar_file_base=config.POLAR_BASE, memory_mode=False)
 
-# --- 2. 运行随机策略收集数据 ---
-N_EPISODES = 50  # 磁盘读取较慢，跑50个Episode足够统计
-accel_data = []
-delta_w_data = []
-w_speed_data = []
+def collect_sensor_stats(episodes=None, stats_path=None):
+    episodes = config.SENSOR_STATS_EPISODES if episodes is None else episodes
+    stats_path = os.path.join(config.BASE_DIR, "sensor_stats.json") if stats_path is None else stats_path
+    if episodes <= 0:
+        raise ValueError("episodes must be positive")
+    h5_files = sorted(
+        glob.glob(os.path.join(config.WIND_DIR, "snapshots_s*.h5")),
+        key=config.natural_key,
+    )
+    if not h5_files:
+        raise FileNotFoundError(f"no wind files found in {config.WIND_DIR}")
 
-print(f"开始运行随机策略收集传感器数据 (磁盘读取模式)...")
-for ep in range(N_EPISODES):
-    # 随机重置时间点以覆盖不同时刻的风场
-    obs, info = env.reset(options={"resettime": np.random.randint(0, 300)})
-    done = False
-    while not done:
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
-        accel_data.append(info["w_accel"])
-        delta_w_data.append(info["delta_w"])
+    rng = np.random.default_rng(config.SEED)
+    env = GliderEnv(h5_file_path=h5_files, polar_file_base=config.POLAR_BASE, memory_mode=False)
+    accel_values = []
+    delta_values = []
+    try:
+        for episode in range(episodes):
+            reset_time = config.sample_start_frame(rng)
+            _, _ = env.reset(seed=config.SEED + episode, options={"resettime": reset_time})
+            done = False
+            while not done:
+                _, _, terminated, truncated, info = env.step(int(rng.integers(env.action_space.n)))
+                accel_values.append(info["w_accel"])
+                delta_values.append(info["delta_w"])
+                done = terminated or truncated
+    finally:
+        env.close()
 
-        # 计算 3D 风速向量的模 (即风速绝对值)
-        w_vec = env.wind_manager.get_wind(*env.phy_state[:3]) * env.wind_ampf
-        w_speed = np.linalg.norm(w_vec)
-        w_speed_data.append(w_speed)
-
-        done = terminated or truncated
-    print(f"Episode {ep+1}/{N_EPISODES} finished.")
-
-# --- 3. 统计与可视化 ---
-accel_data = np.array(accel_data)
-delta_w_data = np.array(delta_w_data)
-w_speed_data = np.array(w_speed_data)
-
-stats = {
-    "w_accel": {
-        "mean": float(np.mean(accel_data)),
-        "std": float(np.std(accel_data))
-    },
-    "delta_w": {
-        "mean": float(np.mean(delta_w_data)),
-        "std": float(np.std(delta_w_data))
-    },
-    "wind_speed": {
-        "mean": float(np.mean(w_speed_data)),
-        "std": float(np.std(w_speed_data)),
-        "rms": float(np.sqrt(np.mean(w_speed_data**2)))
+    stats = {
+        "w_accel": {"mean": float(np.mean(accel_values)), "std": float(np.std(accel_values))},
+        "delta_w": {"mean": float(np.mean(delta_values)), "std": float(np.std(delta_values))},
     }
-}
-
-# 保存统计数据到 JSON
-stats_path = os.path.join(config.BASE_DIR, "sensor_stats.json")
-with open(stats_path, "w") as f:
-    json.dump(stats, f, indent=4)
-print(f"统计数据已保存至 {stats_path}")
-
-def print_stats(name, data):
-    print(f"\n--- {name} 统计结果 ---")
-    print(f"均值: {np.mean(data):.4f}")
-    print(f"标准差 (Std): {np.std(data):.4f}")
-    print(f"分位数 [5%, 25%, 50%, 75%, 95%]:")
-    print(np.percentile(data, [5, 25, 50, 75, 95]))
-
-print_stats("Vertical Acceleration (w_accel)", accel_data)
-print_stats("Wingtip Difference (delta_w)", delta_w_data)
-
-# 打印 总风速 (3D Magnitude) 的 RMS
-print(f"\n--- Total Wind Speed (Magnitude) 统计结果 (WIND_AMPF={config.WIND_AMPF}) ---")
-print(f"风速绝对值的均方根 (RMS Speed): {stats['wind_speed']['rms']:.4f}")
-print(f"均值: {stats['wind_speed']['mean']:.4f}")
-print(f"标准差 (Std): {stats['wind_speed']['std']:.4f}")
+    if stats["w_accel"]["std"] <= 0.0 or stats["delta_w"]["std"] <= 0.0:
+        raise ValueError("sensor statistics must have non-zero standard deviation")
+    with open(stats_path, "w", encoding="utf-8") as stats_file:
+        json.dump(stats, stats_file, indent=2)
+    print(f"Sensor statistics saved to {stats_path}")
+    return stats
 
 
-# 绘图
-plt.figure(figsize=(12, 5))
-
-plt.subplot(1, 2, 1)
-sns.histplot(accel_data, kde=True, color="blue")
-plt.title("w_accel Distribution")
-# 标记 config 中的分箱线作为参考
-for i, val in enumerate(config.BINS_W_ACCEL):
-    plt.axvline(x=val, color='red', linestyle='--', label='Config Bin' if i==0 else "")
-plt.legend()
-
-plt.subplot(1, 2, 2)
-sns.histplot(delta_w_data, kde=True, color="green")
-plt.title("delta_w Distribution")
-for val in config.BINS_DELTA_W:
-    plt.axvline(x=val, color='red', linestyle='--')
-
-plt.tight_layout()
-save_path = os.path.join(config.TRAIN_RESULT_DIR, "sensor_distribution.png")
-plt.savefig(save_path, dpi=300)
-print(f"\n直方图已保存至 {save_path}")
-plt.show()
-
-env.close()
+if __name__ == "__main__":
+    collect_sensor_stats()

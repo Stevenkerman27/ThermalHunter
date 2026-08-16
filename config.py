@@ -36,9 +36,20 @@ DOMAIN_SIZE = (1000.0, 1000.0, 1000.0)
 # ==========================================
 # 环境与状态空间 (Environment & State)
 # ==========================================
-# 训练重置时间范围 (风场帧索引)
-RESET_TIME_MIN = 30
-RESET_TIME_MAX = 300
+# 可复现实验配置
+SEED = 1
+EVAL_SEED = 20260816
+TRAIN_ALGORITHM = "tabular"
+
+# 训练与评估共用起始帧规则。前 60 帧为风场初始瞬态，不参与采样。
+RESET_START_MIN = 60
+RESET_START_MAX = 300
+
+
+def sample_start_frame(rng):
+    if hasattr(rng, "integers"):
+        return int(rng.integers(RESET_START_MIN, RESET_START_MAX))
+    return int(rng.randint(RESET_START_MIN, RESET_START_MAX))
 
 # 坡度控制 (Bank)
 BANK_MIN_DEG = -20.0
@@ -63,23 +74,24 @@ N_PHYS_PER_RL = 2         # 每个 RL 步内的物理积分次数
 RL_STEPS_PER_FRAME = 2    # 多少步 RL 更新一次风场数据帧
 
 # ==========================================
-# 奖励函数参数 (Reward)
+# 风场尺度 (Wind Scale)
 # ==========================================
-WIND_AMPF = 12.0          # 风场放大系数
-REWARD_LAMBDA = 0.5       # 高度变化奖励权重
-REWARD_SURVIVE = 0.0      # 每步生存奖励
+# 实际风场倍率由环境计算，使三维风矢量 RMS / 中位迎角空速等于此值。
+WIND_RMS_TO_TAS_RATIO = 0.5
 CONTROL_DRAG_MULTIPLIER = 1.1 # 操纵面额外阻力系数 (当 AoA 或 Bank 改变时)
+REWARD_W_ACCEL_WEIGHT = 5.0
+REWARD_W_ACCEL_SWEEP_WEIGHTS = (1.0, 3.0, 5.0)
 
 # ==========================================
 # 训练参数 (Training - Q-Learning)
 # ==========================================
-ALPHA_START = 0.005       # 初始学习率
-ALPHA_END = 0.005         # 最终学习率
+ALPHA_START = 0.02        # 初始学习率
+ALPHA_END = 0.02          # 最终学习率
 GAMMA = 0.98              # 折扣因子
 EPSILON_START = 1.0       # 初始探索率
 EPSILON_END = 0.01        # 最小探索率
-EPISODES = 10000           # 总训练集数
-SAVE_INTERVAL = 2500      # 模型保存间隔
+TABULAR_TOTAL_STEPS = 250000
+SAVE_INTERVAL = 50000
 Q_TABLE_NAME = "q_table_v0.pkl"
 SAVE_PATH = os.path.join(Q_TABLE_DIR, Q_TABLE_NAME)
 
@@ -94,16 +106,17 @@ DQN_TARGET_UPDATE_INTERVAL = 10 # 用于旧脚本，新脚本使用 DQN_TARGET_F
 DQN_HIDDEN_SIZE = 32
 DQN_EPSILON_START = 1.0
 DQN_EPSILON_END = 0.05
-DQN_EPISODES = 3000
-DQN_TOTAL_TIMESTEPS = 500000
+DQN_TOTAL_TIMESTEPS = 250000
 DQN_TAU = 1.0
 DQN_TARGET_FREQ = 4000
 DQN_EXPLORATION_FRACTION = 0.5
 DQN_LEARNING_STARTS = 2000
 DQN_TRAIN_FREQ = 4
+DQN_TORCH_THREADS = 1
 DQN_ACTION_MARGIN_K = 0.1  # 动态阈值系数
 DQN_ACTION_MARGIN_MIN = 0.02 # 固定最小阈值
 DQN_SAVE_PATH = os.path.join(Q_TABLE_DIR, "dqn_model.pth") # 用于 train_dqn.py 保存路径
+SENSOR_STATS_EPISODES = 20
 
 # 追踪特定的 Q 值索引 (s_aoa, s_bank, s_accel, s_delta, action)
 TRACK_INDICES = [(2, 3, 1, 1, 4), (2, 3, 2, 2, 0), (2, 3, 0, 0, 8)]
@@ -111,4 +124,4 @@ TRACK_INDICES = [(2, 3, 1, 1, 4), (2, 3, 2, 2, 0), (2, 3, 0, 0, 8)]
 # ==========================================
 # 评估参数 (Evaluation)
 # ==========================================
-N_EVAL_EPISODES = 300     # 评估时的集数
+N_EVAL_EPISODES = 100

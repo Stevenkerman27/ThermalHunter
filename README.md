@@ -9,7 +9,7 @@ The project implements a 3D simulation environment where agents learn control po
 ## Technical Features
 
 - **Optimized Simulator**: The `GliderEnv` utilizes pre-calculated physics tables to achieve training throughput of approximately 5,000 steps per second.
-- **DQN Implementation**: Integration with the CleanRL architecture provides a standardized Deep Q-Network implementation for reproducible training.
+- **DQN Implementation**: A reproducible Deep Q-Network with a single-environment replay buffer and fixed-seed evaluation.
 - **Physics Modeling**:
     - Aerodynamic polar curves for glider performance.
     - Control surface drag modeling, simulating additional drag during attitude transitions.
@@ -20,11 +20,13 @@ The project implements a 3D simulation environment where agents learn control po
 
 ## Project Structure
 
+- `docs/`: Chinese module definitions for the current glider workflow.
 - `glider_discrete_simp.py`: Core Gymnasium-compatible environment.
-- `train_dqn.py`: DQN training script based on CleanRL.
+- `train.py`: Unified training entry; selects tabular Q-learning or DQN.
+- `train_dqn.py`: DQN training implementation.
 - `config.py`: Centralized configuration for physics, environment, and training parameters.
 - `simulator.py`: Interactive visualization tool for trajectories and manual flight.
-- `eval_all.py`: Unified script for parallel policy evaluation and benchmarking.
+- `eval.py`: Fixed-scenario evaluation entry.
 - `glider_train.py`: Tabular Q-learning implementation.
 - `plot_dqn_slice.py` / `plot_dqn_train.py`: Policy analysis and training progress visualization.
 - `wind/`: Directory for HDF5 wind field data.
@@ -43,17 +45,22 @@ Place HDF5 wind field snapshots in the `wind/` directory. Files must follow the 
 
 ## Usage
 
-### DQN Training
-Execute the training script with default parameters:
+### Training
+Execute tabular Q-learning with the configured default:
 ```bash
-python train_dqn.py
+python train.py
+```
+
+Select DQN explicitly:
+```bash
+python train.py --algo dqn
 ```
 Logs and model checkpoints are stored in `runs/` and `q_table/`.
 
 ### Policy Evaluation
 Compare trained models against baseline policies:
 ```bash
-python eval_all.py
+python eval.py
 ```
 
 ### Trajectory Visualization
