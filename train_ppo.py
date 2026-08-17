@@ -142,6 +142,7 @@ class Args:
     ent_coef: float = config.PPO_ENT_COEF
     vf_coef: float = config.PPO_VF_COEF
     max_grad_norm: float = config.PPO_MAX_GRAD_NORM
+    log_interval: int = config.PPO_LOG_INTERVAL
     target_kl: float | None = None
     model_path: str = ""
     log_path: str = ""
@@ -154,6 +155,8 @@ def train(args):
         raise ValueError("total_timesteps must be at least num_steps")
     if args.num_steps % args.num_minibatches != 0:
         raise ValueError("num_steps must be divisible by num_minibatches")
+    if args.log_interval <= 0:
+        raise ValueError("log_interval must be positive")
 
     batch_size = args.num_envs * args.num_steps
     minibatch_size = batch_size // args.num_minibatches
@@ -213,21 +216,31 @@ def train(args):
             next_observation = torch.as_tensor(next_observation_np, dtype=torch.float32, device=device)
             next_done = torch.as_tensor(next_done_np, dtype=torch.float32, device=device)
 
-            for final_info in infos.get("final_info", []):
-                if final_info is None:
-                    continue
-                episode = final_info["episode"]
-                episode_rows.append(
-                    {
-                        "global_step": global_step,
-                        "return": float(episode["r"]),
-                        "length": int(episode["l"]),
-                        "height_change": float(final_info["height"] - final_info["initial_height"]),
-                        "energy_height_change": float(final_info["energy_height"] - final_info["initial_energy_height"]),
-                    }
-                )
-                writer.add_scalar("charts/episodic_return", float(episode["r"]), global_step)
-                writer.add_scalar("charts/episodic_length", int(episode["l"]), global_step)
+            if "episode" in infos:
+                episode = infos["episode"]
+                for env_index in np.flatnonzero(infos["_episode"]):
+                    episode_rows.append(
+                        {
+                            "global_step": global_step,
+                            "return": float(episode["r"][env_index]),
+                            "length": int(episode["l"][env_index]),
+                            "height_change": float(infos["height"][env_index] - infos["initial_height"][env_index]),
+                            "energy_height_change": float(
+                                infos["energy_height"][env_index]
+                                - infos["initial_energy_height"][env_index]
+                            ),
+                        }
+                    )
+                    writer.add_scalar(
+                        "charts/episodic_return",
+                        float(episode["r"][env_index]),
+                        global_step,
+                    )
+                    writer.add_scalar(
+                        "charts/episodic_length",
+                        int(episode["l"][env_index]),
+                        global_step,
+                    )
 
         with torch.no_grad():
             next_value = agent.get_value(next_observation).reshape(1, -1)
@@ -292,7 +305,11 @@ def train(args):
         writer.add_scalar("losses/clip_fraction", float(np.mean(clip_fractions)), global_step)
         writer.add_scalar("losses/explained_variance", explained_variance, global_step)
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-        print(f"step={global_step} policy_loss={policy_loss.item():.4f} value_loss={value_loss.item():.4f}")
+        if iteration % args.log_interval == 0 or iteration == num_iterations:
+            print(
+                f"step={global_step} policy_loss={policy_loss.item():.4f} "
+                f"value_loss={value_loss.item():.4f} episodes={len(episode_rows)}"
+            )
 
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     os.makedirs(os.path.dirname(log_path), exist_ok=True)

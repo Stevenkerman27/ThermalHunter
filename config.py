@@ -152,6 +152,7 @@ PPO_ENT_COEF = 0.01
 PPO_VF_COEF = 0.5
 PPO_MAX_GRAD_NORM = 0.5
 PPO_TORCH_THREADS = 1
+PPO_LOG_INTERVAL = 10
 
 # ==========================================
 # 训练参数 (Training - Dynamic DQN)

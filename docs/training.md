@@ -31,7 +31,7 @@ python train.py --algo ppo
 python train_ppo.py --total-timesteps 1000
 ```
 
-动态 PPO 在单个 `DynamicGliderEnv` 上运行。观测按两个动态传感器的固定尺度归一化；策略网络输出二维高斯动作，经 `RescaleAction` 转换后传入环境的 `[0, 1]^2` 控制语义。实现使用固定长度 rollout、GAE、裁剪策略目标和价值损失。环境数量必须为 1。
+动态 PPO 在单个 `DynamicGliderEnv` 上运行。观测按两个动态传感器的固定尺度归一化；策略网络输出二维高斯动作，经 `RescaleAction` 转换后传入环境的 `[0, 1]^2` 控制语义。实现使用固定长度 rollout、GAE、裁剪策略目标和价值损失。环境数量必须为 1。训练控制台默认每 10 个 rollout iteration 打印一次指标，可通过 `--log-interval N` 调整。
 
 默认模型、逐回合 CSV 和 TensorBoard 分别为 `q_table/ppo_dynamic_model.pth`、`trainresult/ppo_dynamic_training.csv` 和 `trainresult/ppo_runs/`。
 
