@@ -15,6 +15,15 @@ python reward_sweep.py --steps 1000 --stats 5 --cpu
 
 `python simulator.py` 加载表格 Q 或稳态 DQN，运行单条轨迹并显示三维路径、传感器、奖励、控制和真空速。策略类型、模型路径、起始帧和最大步数是该脚本内的可视化设置；它以按需读取方式打开风场。
 
+## 动态环境可视化
+
+```powershell
+python visualize_dynamic.py
+python visualize_dynamic.py --n 1 --max-steps 600
+```
+
+该入口串行可视化动态 PPO、动态 DQN、Cruise 和 Random grid。轨迹使用 `memory_mode=False` 的磁盘惰性风场访问，不把风场文件完整加载到内存；策略图和训练曲线不初始化风场。结果写入 `trainresult/dynamic_visualization/`，并按 `ppo`、`dynamic_dqn`、`cruise`、`random_grid` 分目录保存 `trajectory.csv`、`trajectory.png` 和 `summary.csv`；当 `--n` 大于 1 时，轨迹文件按场景编号保存。PPO 和动态 DQN 另外保存适用的 `policy_map.png` 和 `training.png`。
+
 ## 分析与可视化
 
 - `analyze_bins.py`：按训练起始帧规则运行随机策略，生成稳态 DQN 所需的 `sensor_stats.json`。
