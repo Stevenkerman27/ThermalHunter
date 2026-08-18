@@ -14,7 +14,10 @@ from train_ppo import (
     DynamicObservationWrapper,
     PPOAgent,
     default_model_path,
+    dynamic_observation_shape,
     dynamic_wind_paths,
+    evaluate_dynamic_policy,
+    make_validation_scenarios,
 )
 
 
@@ -27,18 +30,7 @@ def default_evaluation_plot_path():
 
 
 def make_scenarios(n_episodes):
-    rng = np.random.default_rng(config.EVAL_SEED)
-    scenarios = []
-    for _ in range(n_episodes):
-        x, y = rng.uniform(0.2, 0.8, size=2) * np.asarray(config.DOMAIN_SIZE[:2])
-        scenarios.append(
-            {
-                "resettime": config.sample_start_frame(rng),
-                "initial_position": np.array([x, y, rng.uniform(0.2, 0.6) * config.DOMAIN_SIZE[2]]),
-                "initial_heading": rng.uniform(0.0, 2.0 * np.pi),
-            }
-        )
-    return scenarios
+    return make_validation_scenarios(n_episodes)
 
 
 def make_env(wind_manager, discrete_actions=False):
@@ -60,7 +52,7 @@ def torch_action_env(env):
 
 
 def load_ppo_agent(model_path, device):
-    agent = PPOAgent((2,), (2,)).to(device)
+    agent = PPOAgent(dynamic_observation_shape(), (2,)).to(device)
     agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     agent.eval()
     return agent
@@ -68,13 +60,13 @@ def load_ppo_agent(model_path, device):
 
 def load_dynamic_dqn_agent(model_path, device):
     action_count = config.DYNAMIC_DQN_ACTION_LEVELS ** 2
-    agent = QNetwork((2,), action_count).to(device)
+    agent = QNetwork(dynamic_observation_shape(), action_count).to(device)
     agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     agent.eval()
     return agent
 
 
-def evaluate_policy(policy_name, scenarios, wind_manager, agent=None, device=None):
+def _evaluate_policy_single(policy_name, scenarios, wind_manager, agent=None, device=None):
     records = []
     random_generator = np.random.default_rng(config.EVAL_SEED + 1)
     discrete_actions = policy_name in ("Random grid", "Cruise", "DQN")
@@ -103,7 +95,7 @@ def evaluate_policy(policy_name, scenarios, wind_manager, agent=None, device=Non
                 elif policy_name == "PPO":
                     with torch.no_grad():
                         observation_tensor = torch.as_tensor(observation, dtype=torch.float32, device=device).unsqueeze(0)
-                        action = agent.actor_mean(observation_tensor).squeeze(0).cpu().numpy()
+                        action = agent.get_deterministic_action(observation_tensor).squeeze(0).cpu().numpy()
                 elif policy_name == "DQN":
                     with torch.no_grad():
                         observation_tensor = torch.as_tensor(observation, dtype=torch.float32, device=device).unsqueeze(0)
@@ -121,11 +113,47 @@ def evaluate_policy(policy_name, scenarios, wind_manager, agent=None, device=Non
                     "energy_height_change": info["energy_height"] - initial_energy_height,
                     "return": episode_return,
                     "steps": step_count,
+                    "termination_reason": info["termination_reason"],
                 }
             )
     finally:
         env.close()
     return records
+
+
+def evaluate_policy(policy_name, scenarios, wind_manager, agent=None, device=None):
+    discrete_actions = policy_name in ("Random grid", "Cruise", "DQN")
+    random_generator = np.random.default_rng(config.EVAL_SEED + 1)
+    if policy_name == "Random grid":
+        def select_action(observations):
+            return random_generator.integers(
+                config.DYNAMIC_DQN_ACTION_LEVELS ** 2, size=len(observations)
+            )
+    elif policy_name == "Cruise":
+        levels = config.DYNAMIC_DQN_ACTION_LEVELS
+        command = np.array(
+            [config.DYNAMIC_BASELINE_SPEED_ACTION, config.DYNAMIC_BASELINE_ROLL_ACTION],
+            dtype=np.float32,
+        )
+        action = int(np.rint(command[0] * (levels - 1)) * levels + np.rint(command[1] * (levels - 1)))
+
+        def select_action(observations):
+            return np.full(len(observations), action, dtype=np.int64)
+    elif policy_name == "PPO":
+        def select_action(observations):
+            with torch.no_grad():
+                observation_tensor = torch.as_tensor(observations, dtype=torch.float32, device=device)
+                return agent.get_deterministic_action(observation_tensor).cpu().numpy()
+    elif policy_name == "DQN":
+        def select_action(observations):
+            with torch.no_grad():
+                observation_tensor = torch.as_tensor(observations, dtype=torch.float32, device=device)
+                return agent(observation_tensor).argmax(dim=1).cpu().numpy()
+    else:
+        raise ValueError(f"unsupported dynamic policy: {policy_name}")
+    return evaluate_dynamic_policy(
+        policy_name, scenarios, wind_manager, select_action, discrete_actions
+    )
 
 
 def save_plot(results, plot_path):

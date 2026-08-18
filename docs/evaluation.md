@@ -20,8 +20,8 @@ python eval.py --dynamic
 python eval_dynamic.py --n 10 --model path --dqn-model path
 ```
 
-动态评估在相同的起始帧、位置、高度和航向下依次比较 `Random grid`、`Cruise`、连续 PPO 与动态 DQN。随机网格和巡航基线使用离散动作包装器；巡航固定命令 `DYNAMIC_BASELINE_SPEED_ACTION` 与 `DYNAMIC_BASELINE_ROLL_ACTION`。PPO 采用策略均值动作，DQN 采用最大 Q 动作。
+动态评估在相同的起始帧、位置、高度和航向下依次比较 `Random grid`、`Cruise`、连续 PPO 与动态 DQN。随机网格和巡航基线使用离散动作包装器；巡航固定命令 `DYNAMIC_BASELINE_SPEED_ACTION` 与 `DYNAMIC_BASELINE_ROLL_ACTION`。PPO 采用 `tanh(mean)` 的确定性有界动作，DQN 采用最大 Q 动作。
 
-入口需要 PPO 和动态 DQN 两个模型都存在。评估开始时只加载一份完整风场数据到内存，策略环境顺序借用该只读资源，完成后统一关闭。输出每个策略和场景的回报、步数、高度变化与总能量高度变化到 `trainresult/dynamic_evaluation.csv`，并生成 `trainresult/dynamic_evaluation.png`；图中显示两个指标的箱线、原始点、均值、标准差、中位数和样本数。
+入口需要 PPO 和动态 DQN 两个模型都存在。评估开始时只加载一份完整风场数据到内存，策略环境顺序借用该只读资源，完成后统一关闭。输出每个策略和场景的回报、步数、高度变化、总能量高度变化和终止原因到 `trainresult/dynamic_evaluation.csv`，并生成 `trainresult/dynamic_evaluation.png`；图中显示两个指标的箱线、原始点、均值、标准差、中位数和样本数。
 
 动态结果不能与稳态表格 Q 或稳态 DQN 的数值直接作为算法优劣比较，因为环境动力学和奖励不同。

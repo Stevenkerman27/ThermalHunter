@@ -31,9 +31,9 @@ python train.py --algo ppo
 python train_ppo.py --total-timesteps 1000
 ```
 
-动态 PPO 在单个 `DynamicGliderEnv` 上运行。观测按两个动态传感器的固定尺度归一化；策略网络输出二维高斯动作，经 `RescaleAction` 转换后传入环境的 `[0, 1]^2` 控制语义。实现使用固定长度 rollout、GAE、裁剪策略目标和价值损失。环境数量必须为 1。训练控制台默认每 10 个 rollout iteration 打印一次指标，可通过 `--log-interval N` 调整。
+动态 PPO 在一个 `DynamicGliderBatchEnv` 中按 `DYNAMIC_NUM_ENVS` 并行推进多个滑翔机，风场文件集在该训练进程内只加载一份。四维观测按固定尺度归一化；策略使用 Squashed Gaussian，即对高斯样本施加 `tanh` 并在 log-prob 中加入变量变换修正，动作天然位于 `[-1, 1]^2`，再映射至环境的 `[0, 1]^2` 控制语义。实现使用固定长度 rollout、GAE、裁剪策略目标和价值损失。训练控制台每完成 `DYNAMIC_REPORT_EPISODES` 个 episode 打印一次指标。
 
-默认模型、逐回合 CSV 和 TensorBoard 分别为 `q_table/ppo_dynamic_model.pth`、`trainresult/ppo_dynamic_training.csv` 和 `trainresult/ppo_runs/`。
+默认模型、逐回合 CSV 和 TensorBoard 分别为 `q_table/ppo_dynamic_model.pth`、`trainresult/ppo_dynamic_training.csv` 和 `trainresult/ppo_runs/`。另写入 `ppo_dynamic_updates.csv`（loss、entropy、KL、clip fraction、解释方差）。训练过程中不执行策略验证，只按 `DYNAMIC_CHECKPOINT_INTERVAL` 保存 checkpoint；完整评估由独立评估命令执行。
 
 ## 动态 DQN
 
@@ -42,10 +42,10 @@ python train.py --algo dynamic-dqn
 python train_dynamic_dqn.py --total-timesteps 1000
 ```
 
-动态 DQN 与 PPO 使用同一动态环境、观测归一化、奖励和起始帧规则，但通过 25 动作包装器选择速度与滚转命令。实现复用 DQN 的经验回放、epsilon-greedy 和 TD 学习结构，训练中每 1000 步记录 TD loss、平均 Q 值、epsilon 和吞吐率。
+动态 DQN 与 PPO 使用同一批量动态环境、四维观测归一化、奖励和起始帧规则，但通过 25 动作包装器选择速度与滚转命令。实现复用 DQN 的经验回放、epsilon-greedy 和 TD 学习结构，训练控制台与 PPO 一样每完成 `DYNAMIC_REPORT_EPISODES` 个 episode 打印一次指标，并写入 `dynamic_dqn_updates.csv`。
 
-默认模型、逐回合 CSV 和 TensorBoard 分别为 `q_table/dynamic_dqn_model.pth`、`trainresult/dynamic_dqn_training.csv` 和 `trainresult/dynamic_dqn_runs/`。
+默认模型、逐回合 CSV 和 TensorBoard 分别为 `q_table/dynamic_dqn_model.pth`、`trainresult/dynamic_dqn_training.csv` 和 `trainresult/dynamic_dqn_runs/`。训练过程中不执行策略验证，只按 `DYNAMIC_CHECKPOINT_INTERVAL` 保存 checkpoint；完整评估由独立评估命令执行。
 
 ## 可复现实验条件
 
-所有训练都使用 `config.SEED`，并从同一稳定帧范围随机采样，而不是锁定为同一条轨迹。稳态表格 Q 与稳态 DQN 共享风场、物理参数和奖励 `u_z + w_a * a_z`；唯一的奖励权重是 `w_a`。动态 PPO 与动态 DQN 共享动态环境条件和总能量高度增量奖励。旧模型及训练产物不属于兼容性契约。
+所有训练都使用 `config.SEED`，并从 `[60, 100)` 的同一稳定帧范围随机采样，而不是锁定为同一条轨迹。稳态表格 Q 与稳态 DQN 共享风场、物理参数和奖励 `u_z + w_a * a_z`；唯一的奖励权重是 `w_a`。动态 PPO 与动态 DQN 共享动态环境条件和总能量高度增量奖励。训练期间不执行策略验证；两种动态训练都按 `DYNAMIC_CHECKPOINT_INTERVAL` 保存 checkpoint，训练结束后由独立评估命令验证。逐回合日志包含终止原因和动作统计。旧模型及训练产物不属于兼容性契约。

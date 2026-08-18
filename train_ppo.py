@@ -17,7 +17,13 @@ from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
 
 import config
-from glider_dynamic import DynamicGliderEnv
+from training_checkpoint import save_training_checkpoint
+from glider_dynamic import (
+    DynamicDiscreteActionWrapper,
+    DynamicGliderBatchEnv,
+    DynamicGliderEnv,
+    dynamic_discrete_action_commands,
+)
 
 
 def default_model_path():
@@ -28,20 +34,33 @@ def default_training_log_path():
     return os.path.join(config.TRAIN_RESULT_DIR, "ppo_dynamic_training.csv")
 
 
+def default_update_log_path():
+    return os.path.join(config.TRAIN_RESULT_DIR, "ppo_dynamic_updates.csv")
+
+
 def normalized_dynamic_observation(observation):
     scale = np.array(
-        [config.DYNAMIC_VARIO_OBS_SCALE, config.DYNAMIC_ROLL_CUE_OBS_SCALE],
+        [
+            config.DYNAMIC_ENERGY_HEIGHT_OBS_SCALE,
+            config.DYNAMIC_VARIO_OBS_SCALE,
+            config.DYNAMIC_ROLL_CUE_OBS_SCALE,
+            config.DYNAMIC_BANK_OBS_SCALE,
+        ],
         dtype=np.float32,
     )
     return np.asarray(observation, dtype=np.float32) / scale
+
+
+def dynamic_observation_shape():
+    return (4,)
 
 
 class DynamicObservationWrapper(gym.ObservationWrapper):
     def __init__(self, env):
         super().__init__(env)
         self.observation_space = gym.spaces.Box(
-            low=np.full(2, -np.inf, dtype=np.float32),
-            high=np.full(2, np.inf, dtype=np.float32),
+            low=np.full(dynamic_observation_shape(), -np.inf, dtype=np.float32),
+            high=np.full(dynamic_observation_shape(), np.inf, dtype=np.float32),
             dtype=np.float32,
         )
 
@@ -73,7 +92,6 @@ class PPOAgent(nn.Module):
             layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, action_dim), std=0.01),
-            nn.Tanh(),
         )
         self.actor_logstd = nn.Parameter(torch.zeros(1, action_dim))
 
@@ -85,13 +103,19 @@ class PPOAgent(nn.Module):
         action_logstd = self.actor_logstd.expand_as(action_mean)
         distribution = Normal(action_mean, torch.exp(action_logstd))
         if action is None:
-            action = distribution.sample()
+            action = torch.tanh(distribution.sample())
+        action = torch.clamp(action, -1.0 + config.PPO_SQUASH_EPSILON, 1.0 - config.PPO_SQUASH_EPSILON)
+        latent_action = torch.atanh(action)
+        logprob = distribution.log_prob(latent_action) - torch.log(1.0 - action.square() + config.PPO_SQUASH_EPSILON)
         return (
             action,
-            distribution.log_prob(action).sum(1),
+            logprob.sum(1),
             distribution.entropy().sum(1),
             self.critic(observation),
         )
+
+    def get_deterministic_action(self, observation):
+        return torch.tanh(self.actor_mean(observation))
 
 
 def dynamic_wind_paths():
@@ -99,6 +123,92 @@ def dynamic_wind_paths():
     if not paths:
         raise FileNotFoundError("no wind snapshots found")
     return paths
+
+
+def make_validation_scenarios(n_episodes):
+    rng = np.random.default_rng(config.EVAL_SEED)
+    scenarios = []
+    for _ in range(n_episodes):
+        x, y = rng.uniform(0.2, 0.8, size=2) * np.asarray(config.DOMAIN_SIZE[:2])
+        scenarios.append(
+            {
+                "resettime": config.sample_start_frame(rng),
+                "initial_position": np.array([x, y, rng.uniform(0.2, 0.6) * config.DOMAIN_SIZE[2]]),
+                "initial_heading": rng.uniform(0.0, 2.0 * np.pi),
+            }
+        )
+    return scenarios
+
+
+def evaluate_dynamic_policy(policy_name, scenarios, wind_manager, action_selector, discrete_actions):
+    records = []
+    for start in range(0, len(scenarios), config.DYNAMIC_NUM_ENVS):
+        batch_scenarios = scenarios[start:start + config.DYNAMIC_NUM_ENVS]
+        env = DynamicGliderBatchEnv(
+            len(batch_scenarios), wind_manager=wind_manager, autoreset=False
+        )
+        try:
+            raw_observations, _ = env.reset(
+                seed=config.EVAL_SEED + start,
+                options=batch_scenarios,
+            )
+            observations = normalized_dynamic_observation(raw_observations)
+            episode_returns = np.zeros(env.num_envs, dtype=np.float64)
+            episode_steps = np.zeros(env.num_envs, dtype=np.int64)
+            active = np.ones(env.num_envs, dtype=bool)
+            while np.any(active):
+                selected_actions = np.asarray(action_selector(observations))
+                if discrete_actions:
+                    if selected_actions.shape != (env.num_envs,):
+                        raise ValueError("batched DQN evaluator must return shape (num_envs,)")
+                    commands = dynamic_discrete_action_commands(selected_actions)
+                else:
+                    if selected_actions.shape != (env.num_envs, 2):
+                        raise ValueError("batched PPO evaluator must return shape (num_envs, 2)")
+                    commands = np.clip((selected_actions + 1.0) * 0.5, 0.0, 1.0)
+                raw_observations, rewards, terminated, truncated, infos = env.step(
+                    commands, active_mask=active
+                )
+                episode_returns[active] += rewards[active]
+                episode_steps[active] += 1
+                finished = active & np.logical_or(terminated, truncated)
+                for env_index in np.flatnonzero(finished):
+                    records.append(
+                        {
+                            "policy": policy_name,
+                            "scenario": start + env_index,
+                            "return": episode_returns[env_index],
+                            "height_change": infos["height"][env_index] - infos["initial_height"][env_index],
+                            "energy_height_change": (
+                                infos["energy_height"][env_index]
+                                - infos["initial_energy_height"][env_index]
+                            ),
+                            "steps": episode_steps[env_index],
+                            "termination_reason": infos["termination_reason"][env_index],
+                        }
+                    )
+                active &= ~finished
+                observations = normalized_dynamic_observation(raw_observations)
+        finally:
+            env.close()
+    return records
+
+
+def summarize_validation(global_step, records):
+    results = pd.DataFrame(records)
+    energy = results["energy_height_change"]
+    summary = {
+        "global_step": global_step,
+        "mean_return": results["return"].mean(),
+        "mean_energy_height_change": energy.mean(),
+        "median_energy_height_change": energy.median(),
+        "energy_height_change_stderr": energy.sem(),
+        "mean_height_change": results["height_change"].mean(),
+        "mean_steps": results["steps"].mean(),
+    }
+    for reason in ("altitude_low", "altitude_high", "wind_end", "numerical_divergence"):
+        summary[f"termination_{reason}_fraction"] = (results["termination_reason"] == reason).mean()
+    return summary
 
 
 def make_env(seed, capture_video, run_name):
@@ -110,7 +220,6 @@ def make_env(seed, capture_video, run_name):
             min_action=np.full(2, -1.0, dtype=np.float32),
             max_action=np.full(2, 1.0, dtype=np.float32),
         )
-        env = gym.wrappers.ClipAction(env)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         if capture_video:
             env = gym.wrappers.RecordVideo(env, os.path.join(config.TRAIN_RESULT_DIR, "ppo_videos", run_name))
@@ -129,7 +238,7 @@ class Args:
     capture_video: bool = False
     total_timesteps: int = config.PPO_TOTAL_TIMESTEPS
     learning_rate: float = config.PPO_LEARNING_RATE
-    num_envs: int = 1
+    num_envs: int = config.DYNAMIC_NUM_ENVS
     num_steps: int = config.PPO_NUM_STEPS
     anneal_lr: bool = True
     gamma: float = config.PPO_GAMMA
@@ -142,28 +251,28 @@ class Args:
     ent_coef: float = config.PPO_ENT_COEF
     vf_coef: float = config.PPO_VF_COEF
     max_grad_norm: float = config.PPO_MAX_GRAD_NORM
-    log_interval: int = config.PPO_LOG_INTERVAL
     target_kl: float | None = None
     model_path: str = ""
     log_path: str = ""
+    update_log_path: str = ""
 
 
 def train(args):
-    if args.num_envs != 1:
-        raise ValueError("dynamic PPO supports exactly one environment to avoid duplicate wind-field memory")
-    if args.total_timesteps < args.num_steps:
-        raise ValueError("total_timesteps must be at least num_steps")
-    if args.num_steps % args.num_minibatches != 0:
-        raise ValueError("num_steps must be divisible by num_minibatches")
-    if args.log_interval <= 0:
-        raise ValueError("log_interval must be positive")
-
+    if args.num_envs != config.DYNAMIC_NUM_ENVS:
+        raise ValueError("dynamic PPO environment count is defined by config.DYNAMIC_NUM_ENVS")
+    if args.capture_video:
+        raise ValueError("video capture is not supported by the batched dynamic environment")
+    if args.total_timesteps < args.num_envs * args.num_steps:
+        raise ValueError("total_timesteps must cover one full batched PPO rollout")
+    if (args.num_envs * args.num_steps) % args.num_minibatches != 0:
+        raise ValueError("the total PPO rollout batch must be divisible by num_minibatches")
     batch_size = args.num_envs * args.num_steps
     minibatch_size = batch_size // args.num_minibatches
     num_iterations = args.total_timesteps // batch_size
     run_name = f"dynamic_ppo__{args.seed}__{int(time.time())}"
     model_path = args.model_path or default_model_path()
     log_path = args.log_path or default_training_log_path()
+    update_log_path = args.update_log_path or default_update_log_path()
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -177,7 +286,12 @@ def train(args):
     writer.add_text("hyperparameters", "|param|value|\n|-|-|\n%s" % "\n".join(
         f"|{key}|{value}|" for key, value in vars(args).items()
     ))
-    envs = gym.vector.SyncVectorEnv([make_env(args.seed, args.capture_video, run_name)])
+    envs = DynamicGliderBatchEnv(
+        args.num_envs,
+        dynamic_wind_paths(),
+        memory_mode=True,
+        autoreset=True,
+    )
     agent = PPOAgent(envs.single_observation_space.shape, envs.single_action_space.shape).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
@@ -189,11 +303,19 @@ def train(args):
     values = torch.zeros((args.num_steps, args.num_envs), device=device)
 
     next_observation, _ = envs.reset(seed=args.seed)
-    next_observation = torch.as_tensor(next_observation, dtype=torch.float32, device=device)
+    next_observation = torch.as_tensor(
+        normalized_dynamic_observation(next_observation), dtype=torch.float32, device=device
+    )
     next_done = torch.zeros(args.num_envs, device=device)
     global_step = 0
     start_time = time.time()
     episode_rows = []
+    update_rows = []
+    next_checkpoint_step = config.DYNAMIC_CHECKPOINT_INTERVAL
+    episode_actions = [[] for _ in range(args.num_envs)]
+    episode_returns = np.zeros(args.num_envs, dtype=np.float64)
+    episode_lengths = np.zeros(args.num_envs, dtype=np.int64)
+    next_report_episode = config.DYNAMIC_REPORT_EPISODES
 
     for iteration in range(1, num_iterations + 1):
         if args.anneal_lr:
@@ -210,35 +332,54 @@ def train(args):
             actions[step] = action
             logprobs[step] = logprob
 
-            next_observation_np, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
+            actions_np = action.cpu().numpy()
+            commands = np.clip((actions_np + 1.0) * 0.5, 0.0, 1.0)
+            next_observation_np, reward, terminations, truncations, infos = envs.step(commands)
+            for env_index, command in enumerate(commands):
+                episode_actions[env_index].append(command)
+            episode_returns += reward
+            episode_lengths += 1
             next_done_np = np.logical_or(terminations, truncations)
             rewards[step] = torch.as_tensor(reward, dtype=torch.float32, device=device)
-            next_observation = torch.as_tensor(next_observation_np, dtype=torch.float32, device=device)
+            next_observation = torch.as_tensor(
+                normalized_dynamic_observation(next_observation_np), dtype=torch.float32, device=device
+            )
             next_done = torch.as_tensor(next_done_np, dtype=torch.float32, device=device)
 
-            if "episode" in infos:
-                episode = infos["episode"]
-                for env_index in np.flatnonzero(infos["_episode"]):
+            if np.any(next_done_np):
+                for env_index in np.flatnonzero(next_done_np):
+                    action_values = np.asarray(episode_actions[env_index], dtype=np.float64)
                     episode_rows.append(
                         {
                             "global_step": global_step,
-                            "return": float(episode["r"][env_index]),
-                            "length": int(episode["l"][env_index]),
+                            "return": float(episode_returns[env_index]),
+                            "length": int(episode_lengths[env_index]),
                             "height_change": float(infos["height"][env_index] - infos["initial_height"][env_index]),
                             "energy_height_change": float(
                                 infos["energy_height"][env_index]
                                 - infos["initial_energy_height"][env_index]
                             ),
+                            "termination_reason": infos["termination_reason"][env_index],
+                            "speed_action_mean": float(action_values[:, 0].mean()),
+                            "speed_action_std": float(action_values[:, 0].std()),
+                            "roll_action_mean": float(action_values[:, 1].mean()),
+                            "roll_action_std": float(action_values[:, 1].std()),
+                            "action_saturation_fraction": float(
+                                (np.abs(action_values) >= 1.0 - config.DYNAMIC_ACTION_SATURATION_MARGIN).mean()
+                            ),
                         }
                     )
+                    episode_actions[env_index] = []
+                    episode_returns[env_index] = 0.0
+                    episode_lengths[env_index] = 0
                     writer.add_scalar(
                         "charts/episodic_return",
-                        float(episode["r"][env_index]),
+                        float(episode_rows[-1]["return"]),
                         global_step,
                     )
                     writer.add_scalar(
                         "charts/episodic_length",
-                        int(episode["l"][env_index]),
+                        int(episode_rows[-1]["length"]),
                         global_step,
                     )
 
@@ -265,6 +406,7 @@ def train(args):
         batch_values = values.reshape(-1)
         batch_indices = np.arange(batch_size)
         clip_fractions = []
+        approx_kls = []
 
         for _ in range(args.update_epochs):
             np.random.shuffle(batch_indices)
@@ -275,6 +417,7 @@ def train(args):
                 ratio = log_ratio.exp()
                 with torch.no_grad():
                     clip_fractions.append(((ratio - 1.0).abs() > args.clip_coef).float().mean().item())
+                    approx_kls.append(((ratio - 1.0) - log_ratio).mean().item())
 
                 minibatch_advantages = batch_advantages[indices]
                 if args.norm_adv:
@@ -303,18 +446,46 @@ def train(args):
         writer.add_scalar("losses/policy_loss", policy_loss.item(), global_step)
         writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
         writer.add_scalar("losses/clip_fraction", float(np.mean(clip_fractions)), global_step)
+        writer.add_scalar("losses/approx_kl", float(np.mean(approx_kls)), global_step)
         writer.add_scalar("losses/explained_variance", explained_variance, global_step)
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-        if iteration % args.log_interval == 0 or iteration == num_iterations:
+        update_rows.append(
+            {
+                "global_step": global_step,
+                "learning_rate": optimizer.param_groups[0]["lr"],
+                "policy_loss": policy_loss.item(),
+                "value_loss": value_loss.item(),
+                "entropy": entropy_loss.item(),
+                "approx_kl": float(np.mean(approx_kls)),
+                "clip_fraction": float(np.mean(clip_fractions)),
+                "explained_variance": explained_variance,
+            }
+        )
+        if global_step >= next_checkpoint_step:
+            checkpoint_path = save_training_checkpoint(
+                agent,
+                model_path,
+                global_step,
+                (
+                    (episode_rows, log_path),
+                    (update_rows, update_log_path),
+                ),
+            )
+            print(f"Saved PPO checkpoint to {checkpoint_path}")
+            while next_checkpoint_step <= global_step:
+                next_checkpoint_step += config.DYNAMIC_CHECKPOINT_INTERVAL
+        while len(episode_rows) >= next_report_episode:
             print(
                 f"step={global_step} policy_loss={policy_loss.item():.4f} "
-                f"value_loss={value_loss.item():.4f} episodes={len(episode_rows)}"
+                f"value_loss={value_loss.item():.4f} episodes={next_report_episode}"
             )
+            next_report_episode += config.DYNAMIC_REPORT_EPISODES
 
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     torch.save(agent.state_dict(), model_path)
     pd.DataFrame(episode_rows).to_csv(log_path, index=False)
+    pd.DataFrame(update_rows).to_csv(update_log_path, index=False)
     envs.close()
     writer.close()
     print(f"Saved PPO model to {model_path}")

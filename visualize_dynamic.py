@@ -1,4 +1,4 @@
-"""Visualize dynamic glider policies without loading wind fields into memory."""
+"""Visualize dynamic glider policies with one shared in-memory wind field."""
 
 import argparse
 import os
@@ -12,13 +12,20 @@ import torch
 
 import config
 from glider_discrete_simp import RBWindField
-from glider_dynamic import DynamicDiscreteActionWrapper, DynamicGliderEnv
+from glider_dynamic import (
+    DynamicDiscreteActionWrapper,
+    DynamicGliderBatchEnv,
+    DynamicGliderEnv,
+    dynamic_discrete_action_commands,
+)
 from train_dqn import QNetwork
 from train_ppo import (
     DynamicObservationWrapper,
     PPOAgent,
     default_model_path as default_ppo_model_path,
+    dynamic_observation_shape,
     dynamic_wind_paths,
+    normalized_dynamic_observation,
 )
 
 
@@ -45,14 +52,14 @@ def make_scenario(seed):
 
 
 def load_agents(ppo_model_path, dqn_model_path, device):
-    ppo_agent = PPOAgent((2,), (2,)).to(device)
+    ppo_agent = PPOAgent(dynamic_observation_shape(), (2,)).to(device)
     ppo_agent.load_state_dict(
         torch.load(ppo_model_path, map_location=device, weights_only=True)
     )
     ppo_agent.eval()
 
     dqn_action_count = config.DYNAMIC_DQN_ACTION_LEVELS ** 2
-    dqn_agent = QNetwork((2,), dqn_action_count).to(device)
+    dqn_agent = QNetwork(dynamic_observation_shape(), dqn_action_count).to(device)
     dqn_agent.load_state_dict(
         torch.load(dqn_model_path, map_location=device, weights_only=True)
     )
@@ -128,7 +135,7 @@ def run_trajectory(policy_name, scenario, wind_manager, ppo_agent, dqn_agent, de
                     observation_tensor = torch.as_tensor(
                         observation, dtype=torch.float32, device=device
                     ).unsqueeze(0)
-                    raw_action = ppo_agent.actor_mean(observation_tensor).squeeze(0).cpu().numpy()
+                    raw_action = ppo_agent.get_deterministic_action(observation_tensor).squeeze(0).cpu().numpy()
                 command = np.clip((raw_action + 1.0) * 0.5, 0.0, 1.0)
                 action = raw_action
                 action_index = None
@@ -273,8 +280,10 @@ def save_policy_map(policy_name, agent, device, output_path, grid_size=121):
     vario_grid, roll_grid = np.meshgrid(vario, roll_cue)
     observations = np.stack(
         [
+            np.full(vario_grid.size, 0.5, dtype=np.float32),
             vario_grid.ravel() / config.DYNAMIC_VARIO_OBS_SCALE,
             roll_grid.ravel() / config.DYNAMIC_ROLL_CUE_OBS_SCALE,
+            np.zeros(vario_grid.size, dtype=np.float32),
         ],
         axis=1,
     ).astype(np.float32)
@@ -282,7 +291,7 @@ def save_policy_map(policy_name, agent, device, output_path, grid_size=121):
     observation_tensor = torch.as_tensor(observations, device=device)
     with torch.no_grad():
         if policy_name == "PPO":
-            commands = ((agent.actor_mean(observation_tensor) + 1.0) * 0.5).cpu().numpy()
+            commands = ((agent.get_deterministic_action(observation_tensor) + 1.0) * 0.5).cpu().numpy()
             panels = [
                 (commands[:, 0].reshape(vario_grid.shape), "Speed command", "viridis"),
                 (commands[:, 1].reshape(vario_grid.shape), "Roll command", "coolwarm"),
@@ -312,7 +321,7 @@ def save_policy_map(policy_name, agent, device, output_path, grid_size=121):
         axis.set_xlabel("Vario (m/s)")
         axis.set_ylabel("Roll cue (m/s)")
         figure.colorbar(image, ax=axis, shrink=0.85)
-    figure.suptitle(f"Dynamic {policy_name} policy map")
+    figure.suptitle(f"Dynamic {policy_name} policy map (energy height=500 m, bank=0 deg)")
     figure.tight_layout()
     figure.savefig(output_path, dpi=200)
     plt.close(figure)
@@ -360,7 +369,117 @@ def save_training_plot(policy_name, csv_path, output_path):
     return True
 
 
-def main():
+def _append_batch_trajectory_row(rows, env, env_index, step, command, action_index, reward, done):
+    infos = env._infos(
+        np.zeros(env.num_envs, dtype=np.float64),
+        np.full(env.num_envs, None, dtype=object),
+    )
+    wind = env._wind(env.position, env.wind_frame)
+    rows.append(
+        {
+            "step": step,
+            "time_s": step * config.DT_RL,
+            "x": float(env.position[env_index, 0]),
+            "y": float(env.position[env_index, 1]),
+            "z": float(env.position[env_index, 2]),
+            "energy_height": infos["energy_height"][env_index],
+            "tas": infos["tas"][env_index],
+            "alpha_deg": infos["alpha_deg"][env_index],
+            "bank_deg": infos["bank_deg"][env_index],
+            "vario": infos["total_energy_vario"][env_index],
+            "roll_cue": infos["roll_cue"][env_index],
+            "wind_frame": infos["wind_frame"][env_index],
+            "wind_ux": float(wind[env_index, 0]),
+            "wind_uy": float(wind[env_index, 1]),
+            "wind_uz": float(wind[env_index, 2]),
+            "command_speed": float(command[0]),
+            "command_roll": float(command[1]),
+            "action_index": action_index,
+            "reward": float(reward),
+            "done": bool(done),
+        }
+    )
+
+
+def run_trajectory_batch(tasks, wind_manager, ppo_agent, dqn_agent, device, max_steps):
+    if not tasks or len(tasks) > config.DYNAMIC_NUM_ENVS:
+        raise ValueError("trajectory batch must contain between 1 and DYNAMIC_NUM_ENVS tasks")
+    scenarios = [make_scenario(config.EVAL_SEED + scenario_index) for _, scenario_index in tasks]
+    env = DynamicGliderBatchEnv(len(tasks), wind_manager=wind_manager, autoreset=False)
+    policy_order = ("PPO", "DQN", "Cruise", "Random grid")
+    random_generators = [
+        np.random.default_rng(config.EVAL_SEED + scenario_index + policy_order.index(policy_name))
+        for policy_name, scenario_index in tasks
+    ]
+    rows = [[] for _ in tasks]
+    try:
+        raw_observations, _ = env.reset(seed=config.EVAL_SEED, options=scenarios)
+        observations = normalized_dynamic_observation(raw_observations)
+        for env_index in range(env.num_envs):
+            _append_batch_trajectory_row(
+                rows[env_index], env, env_index, 0, np.array([np.nan, np.nan]), None, 0.0, False
+            )
+        active = np.ones(env.num_envs, dtype=bool)
+        for step in range(1, max_steps + 1):
+            commands = np.full((env.num_envs, 2), 0.5, dtype=np.float32)
+            action_indices = [None] * env.num_envs
+            ppo_indices = [index for index, (policy_name, _) in enumerate(tasks) if policy_name == "PPO" and active[index]]
+            if ppo_indices:
+                with torch.no_grad():
+                    observation_tensor = torch.as_tensor(observations[ppo_indices], dtype=torch.float32, device=device)
+                    raw_actions = ppo_agent.get_deterministic_action(observation_tensor).cpu().numpy()
+                commands[ppo_indices] = np.clip((raw_actions + 1.0) * 0.5, 0.0, 1.0)
+            dqn_indices = [index for index, (policy_name, _) in enumerate(tasks) if policy_name == "DQN" and active[index]]
+            if dqn_indices:
+                with torch.no_grad():
+                    observation_tensor = torch.as_tensor(observations[dqn_indices], dtype=torch.float32, device=device)
+                    dqn_actions = dqn_agent(observation_tensor).argmax(dim=1).cpu().numpy()
+                commands[dqn_indices] = dynamic_discrete_action_commands(dqn_actions)
+                for env_index, action in zip(dqn_indices, dqn_actions):
+                    action_indices[env_index] = int(action)
+            for env_index, (policy_name, _) in enumerate(tasks):
+                if not active[env_index]:
+                    continue
+                if policy_name == "Cruise":
+                    command = np.array(
+                        [config.DYNAMIC_BASELINE_SPEED_ACTION, config.DYNAMIC_BASELINE_ROLL_ACTION],
+                        dtype=np.float32,
+                    )
+                    commands[env_index] = command
+                    action_indices[env_index] = int(
+                        np.rint(command[0] * (config.DYNAMIC_DQN_ACTION_LEVELS - 1))
+                        * config.DYNAMIC_DQN_ACTION_LEVELS
+                        + np.rint(command[1] * (config.DYNAMIC_DQN_ACTION_LEVELS - 1))
+                    )
+                elif policy_name == "Random grid":
+                    action = int(random_generators[env_index].integers(config.DYNAMIC_DQN_ACTION_LEVELS ** 2))
+                    commands[env_index] = dynamic_discrete_action_commands(np.asarray([action]))[0]
+                    action_indices[env_index] = action
+            raw_observations, rewards, terminated, truncated, _ = env.step(
+                commands, active_mask=active
+            )
+            done = np.logical_or(terminated, truncated)
+            for env_index in np.flatnonzero(active):
+                _append_batch_trajectory_row(
+                    rows[env_index],
+                    env,
+                    env_index,
+                    step,
+                    commands[env_index],
+                    action_indices[env_index],
+                    rewards[env_index],
+                    done[env_index],
+                )
+            active &= ~done
+            if not np.any(active):
+                break
+            observations = normalized_dynamic_observation(raw_observations)
+    finally:
+        env.close()
+    return {task: pd.DataFrame(task_rows) for task, task_rows in zip(tasks, rows)}
+
+
+def _main_single():
     parser = argparse.ArgumentParser()
     parser.add_argument("--n", type=int, default=1)
     parser.add_argument("--max-steps", type=int, default=600)
@@ -436,6 +555,82 @@ def main():
             pd.DataFrame(summaries).to_csv(output_dir / "summary.csv", index=False)
     finally:
         wind_manager.close()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--n", type=int, default=1)
+    parser.add_argument("--max-steps", type=int, default=600)
+    parser.add_argument("--ppo-model", default=default_ppo_model_path())
+    parser.add_argument("--dqn-model", default=os.path.join(config.Q_TABLE_DIR, "dynamic_dqn_model.pth"))
+    parser.add_argument("--skip-maps", action="store_true")
+    parser.add_argument("--skip-training", action="store_true")
+    args = parser.parse_args()
+    if args.n <= 0 or args.max_steps <= 0:
+        raise ValueError("n and max-steps must be positive")
+    if not os.path.exists(args.ppo_model):
+        raise FileNotFoundError(f"PPO model not found: {args.ppo_model}")
+    if not os.path.exists(args.dqn_model):
+        raise FileNotFoundError(f"dynamic DQN model not found: {args.dqn_model}")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ppo_agent, dqn_agent = load_agents(args.ppo_model, args.dqn_model, device)
+    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    if not args.skip_maps:
+        save_policy_map("PPO", ppo_agent, device, OUTPUT_ROOT / POLICY_DIRS["PPO"] / "policy_map.png")
+        save_policy_map("DQN", dqn_agent, device, OUTPUT_ROOT / POLICY_DIRS["DQN"] / "policy_map.png")
+    if not args.skip_training:
+        for policy_name, csv_path in {
+            "PPO": os.path.join(config.TRAIN_RESULT_DIR, "ppo_dynamic_training.csv"),
+            "DQN": os.path.join(config.TRAIN_RESULT_DIR, "dynamic_dqn_training.csv"),
+        }.items():
+            if os.path.exists(csv_path):
+                output_path = OUTPUT_ROOT / POLICY_DIRS[policy_name] / "training.png"
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                save_training_plot(policy_name, csv_path, output_path)
+
+    policies = ("PPO", "DQN", "Cruise", "Random grid")
+    tasks = [(policy_name, scenario_index) for policy_name in policies for scenario_index in range(args.n)]
+    wind_manager = RBWindField(dynamic_wind_paths(), memory_mode=True)
+    try:
+        trajectories = {}
+        for start in range(0, len(tasks), config.DYNAMIC_NUM_ENVS):
+            trajectories.update(
+                run_trajectory_batch(
+                    tasks[start:start + config.DYNAMIC_NUM_ENVS],
+                    wind_manager,
+                    ppo_agent,
+                    dqn_agent,
+                    device,
+                    args.max_steps,
+                )
+            )
+    finally:
+        wind_manager.close()
+
+    for policy_name in policies:
+        output_dir = OUTPUT_ROOT / POLICY_DIRS[policy_name]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        summaries = []
+        for scenario_index in range(args.n):
+            data = trajectories[(policy_name, scenario_index)]
+            suffix = "" if args.n == 1 else f"_{scenario_index + 1:03d}"
+            data.to_csv(output_dir / f"trajectory{suffix}.csv", index=False)
+            save_trajectory_plot(data, policy_name, output_dir / f"trajectory{suffix}.png")
+            summaries.append(
+                {
+                    "scenario": scenario_index,
+                    "steps": len(data) - 1,
+                    "height_change": data["z"].iloc[-1] - data["z"].iloc[0],
+                    "energy_height_change": data["energy_height"].iloc[-1] - data["energy_height"].iloc[0],
+                    "return": data["reward"].sum(),
+                }
+            )
+            print(
+                f"{policy_name} scenario={scenario_index}: steps={len(data) - 1}, "
+                f"height_change={data['z'].iloc[-1] - data['z'].iloc[0]:.2f} m, output={output_dir}"
+            )
+        pd.DataFrame(summaries).to_csv(output_dir / "summary.csv", index=False)
 
 
 if __name__ == "__main__":

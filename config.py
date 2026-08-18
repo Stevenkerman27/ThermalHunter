@@ -17,9 +17,6 @@ WIND_DIR = os.path.join(BASE_DIR, 'wind')
 Q_TABLE_DIR = os.path.join(BASE_DIR, 'q_table')
 TRAIN_RESULT_DIR = os.path.join(BASE_DIR, 'trainresult')
 
-glider_data = ["LS-8 (15m)", 346, 185, 80, -0.59, 115, -0.76, 173, -2.00, 10.5, 190, 108, 240]
-#滑翔机名称，参考重量，压舱水重量，速度，下沉率，速度，下沉率，速度，下沉率，翼面积.....
-
 # 确保目录存在
 for d in [Q_TABLE_DIR, TRAIN_RESULT_DIR]:
     os.makedirs(d, exist_ok=True)
@@ -43,8 +40,7 @@ TRAIN_ALGORITHM = "tabular"
 
 # 训练与评估共用起始帧规则。前 60 帧为风场初始瞬态，不参与采样。
 RESET_START_MIN = 60
-RESET_START_MAX = 300
-
+RESET_START_MAX = 100
 
 def sample_start_frame(rng):
     if hasattr(rng, "integers"):
@@ -74,7 +70,7 @@ N_PHYS_PER_RL = 2         # 每个 RL 步内的物理积分次数
 RL_STEPS_PER_FRAME = 2    # 多少步 RL 更新一次风场数据帧
 
 # 动态 PPO 环境：连续积分与执行器
-DYNAMIC_DT_INTEGRATION = 0.05
+DYNAMIC_DT_INTEGRATION = 0.1
 DYNAMIC_WIND_SECONDS_PER_FRAME = DT_RL * RL_STEPS_PER_FRAME
 DYNAMIC_AOA_MIN_DEG = 0.0
 DYNAMIC_AOA_MAX_DEG = 10.0
@@ -83,14 +79,21 @@ DYNAMIC_AOA_RATE_LIMIT_DEG_S = 10.0
 DYNAMIC_BANK_TIME_CONSTANT = 1.0
 DYNAMIC_BANK_RATE_LIMIT_DEG_S = 20.0
 DYNAMIC_MIN_TAS = 5.0
+DYNAMIC_NUMERICAL_MAX_TAS = 100.0
 DYNAMIC_ALTITUDE_MIN_FRACTION = 0.1
 DYNAMIC_ALTITUDE_MAX_FRACTION = 0.9
 DYNAMIC_VARIO_TIME_CONSTANT = 1.0
 DYNAMIC_VARIO_OBS_SCALE = 5.0
 DYNAMIC_ROLL_CUE_OBS_SCALE = 5.0
+DYNAMIC_ENERGY_HEIGHT_OBS_SCALE = DOMAIN_SIZE[2]
+DYNAMIC_BANK_OBS_SCALE = np.deg2rad(max(abs(BANK_MIN_DEG), abs(BANK_MAX_DEG)))
+DYNAMIC_ACTION_SATURATION_MARGIN = 0.05
+DYNAMIC_CHECKPOINT_INTERVAL = 10000
+DYNAMIC_REPORT_EPISODES = 10
 DYNAMIC_BASELINE_SPEED_ACTION = 0.5
 DYNAMIC_BASELINE_ROLL_ACTION = 0.5
 DYNAMIC_DQN_ACTION_LEVELS = 5
+DYNAMIC_NUM_ENVS = 64
 
 # ==========================================
 # 风场尺度 (Wind Scale)
@@ -109,8 +112,7 @@ ALPHA_END = 0.02          # 最终学习率
 GAMMA = 0.98              # 折扣因子
 EPSILON_START = 1.0       # 初始探索率
 EPSILON_END = 0.01        # 最小探索率
-TABULAR_TOTAL_STEPS = 250000
-SAVE_INTERVAL = 50000
+TABULAR_TOTAL_STEPS = 100000
 Q_TABLE_NAME = "q_table_v0.pkl"
 SAVE_PATH = os.path.join(Q_TABLE_DIR, Q_TABLE_NAME)
 
@@ -125,7 +127,7 @@ DQN_TARGET_UPDATE_INTERVAL = 10 # 用于旧脚本，新脚本使用 DQN_TARGET_F
 DQN_HIDDEN_SIZE = 32
 DQN_EPSILON_START = 1.0
 DQN_EPSILON_END = 0.05
-DQN_TOTAL_TIMESTEPS = 250000
+DQN_TOTAL_TIMESTEPS = 50000
 DQN_TAU = 1.0
 DQN_TARGET_FREQ = 4000
 DQN_EXPLORATION_FRACTION = 0.5
@@ -140,9 +142,11 @@ SENSOR_STATS_EPISODES = 20
 # ==========================================
 # 训练参数 (Training - Dynamic PPO)
 # ==========================================
-PPO_TOTAL_TIMESTEPS = 250000
+PPO_TOTAL_TIMESTEPS = 100000
 PPO_LEARNING_RATE = 3e-4
-PPO_NUM_STEPS = 1024
+# Per-environment rollout length. With DYNAMIC_NUM_ENVS=64, each PPO update
+# retains the original 1,024 total transitions.
+PPO_NUM_STEPS = 16
 PPO_NUM_MINIBATCHES = 32
 PPO_UPDATE_EPOCHS = 10
 PPO_GAMMA = 0.99
@@ -152,12 +156,12 @@ PPO_ENT_COEF = 0.01
 PPO_VF_COEF = 0.5
 PPO_MAX_GRAD_NORM = 0.5
 PPO_TORCH_THREADS = 1
-PPO_LOG_INTERVAL = 10
+PPO_SQUASH_EPSILON = 1e-6
 
 # ==========================================
 # 训练参数 (Training - Dynamic DQN)
 # ==========================================
-DYNAMIC_DQN_TOTAL_TIMESTEPS = 250000
+DYNAMIC_DQN_TOTAL_TIMESTEPS = 50000
 DYNAMIC_DQN_LEARNING_RATE = 6e-5
 DYNAMIC_DQN_GAMMA = 0.995
 DYNAMIC_DQN_BATCH_SIZE = 128

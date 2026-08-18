@@ -136,17 +136,96 @@ class RBWindField:
         upper_wind = self._get_wind_at_index(upper_idx, x, y, z)
         return lower_wind + fraction * (upper_wind - lower_wind)
 
+    def _get_winds_at_indices(self, global_t_indices, positions):
+        """Return trilinearly interpolated winds for a batch of memory-resident states."""
+        if not self.memory_mode:
+            raise ValueError("batched wind queries require memory_mode=True")
+        global_t_indices = np.asarray(global_t_indices, dtype=np.int64)
+        positions = np.asarray(positions, dtype=np.float64)
+        if global_t_indices.ndim != 1 or positions.shape != (len(global_t_indices), 3):
+            raise ValueError("batched wind queries require frame shape (N,) and position shape (N, 3)")
+
+        indices = np.clip(global_t_indices, 0, self.max_t_idx)
+        winds = np.empty((len(indices), 3), dtype=np.float64)
+        for file_idx, dsets in enumerate(self.dsets_list):
+            in_file = (indices >= self.t_offsets[file_idx]) & (indices < self.t_offsets[file_idx + 1])
+            if not np.any(in_file):
+                continue
+            selected = np.flatnonzero(in_file)
+            local_indices = indices[selected] - self.t_offsets[file_idx]
+            coordinates = positions[selected]
+            fx = np.clip(
+                (coordinates[:, 0] / self.domain_size[0]) * (self.space_range[0] - 1),
+                0,
+                self.space_range[0] - 1.00001,
+            )
+            fy = np.clip(
+                (coordinates[:, 1] / self.domain_size[1]) * (self.space_range[1] - 1),
+                0,
+                self.space_range[1] - 1.00001,
+            )
+            fz = np.clip(
+                (coordinates[:, 2] / self.domain_size[2]) * (self.space_range[2] - 1),
+                0,
+                self.space_range[2] - 1.00001,
+            )
+            ix, iy, iz = fx.astype(np.intp), fy.astype(np.intp), fz.astype(np.intp)
+            dx, dy, dz = fx - ix, fy - iy, fz - iz
+            for component_index, component in enumerate(("ux", "uy", "uz")):
+                values = dsets[component]
+                c000 = values[local_indices, ix, iy, iz]
+                c100 = values[local_indices, ix + 1, iy, iz]
+                c010 = values[local_indices, ix, iy + 1, iz]
+                c110 = values[local_indices, ix + 1, iy + 1, iz]
+                c001 = values[local_indices, ix, iy, iz + 1]
+                c101 = values[local_indices, ix + 1, iy, iz + 1]
+                c011 = values[local_indices, ix, iy + 1, iz + 1]
+                c111 = values[local_indices, ix + 1, iy + 1, iz + 1]
+                lower = (
+                    c000 * (1.0 - dx) * (1.0 - dy)
+                    + c100 * dx * (1.0 - dy)
+                    + c010 * (1.0 - dx) * dy
+                    + c110 * dx * dy
+                )
+                upper = (
+                    c001 * (1.0 - dx) * (1.0 - dy)
+                    + c101 * dx * (1.0 - dy)
+                    + c011 * (1.0 - dx) * dy
+                    + c111 * dx * dy
+                )
+                winds[selected, component_index] = lower * (1.0 - dz) + upper * dz
+        return winds
+
+    def get_winds_at_frames(self, frame_positions, positions):
+        """Linearly interpolate winds for a batch of positions and frame positions."""
+        frame_positions = np.asarray(frame_positions, dtype=np.float64)
+        positions = np.asarray(positions, dtype=np.float64)
+        if frame_positions.ndim != 1 or positions.shape != (len(frame_positions), 3):
+            raise ValueError("batched wind queries require frame shape (N,) and position shape (N, 3)")
+        bounded_frames = np.clip(frame_positions, 0.0, self.max_t_idx)
+        lower_indices = np.floor(bounded_frames).astype(np.int64)
+        upper_indices = np.minimum(lower_indices + 1, self.max_t_idx)
+        fraction = (bounded_frames - lower_indices)[:, None]
+        lower_winds = self._get_winds_at_indices(lower_indices, positions)
+        upper_winds = self._get_winds_at_indices(upper_indices, positions)
+        return lower_winds + fraction * (upper_winds - lower_winds)
+
     def vector_rms(self):
         total_squared_speed = 0.0
-        component_count = 0
+        sample_count = 0
         for dsets in self.dsets_list:
-            for component in ('ux', 'uy', 'uz'):
-                values = dsets[component][:]
-                total_squared_speed += np.square(values, dtype=np.float64).sum()
-                component_count += values.size
-        if component_count == 0:
+            ux = dsets['ux'][:]
+            uy = dsets['uy'][:]
+            uz = dsets['uz'][:]
+            total_squared_speed += (
+                np.square(ux, dtype=np.float64)
+                + np.square(uy, dtype=np.float64)
+                + np.square(uz, dtype=np.float64)
+            ).sum()
+            sample_count += ux.size
+        if sample_count == 0:
             raise ValueError("wind field contains no velocity samples")
-        return float(np.sqrt(total_squared_speed / component_count))
+        return float(np.sqrt(total_squared_speed / sample_count))
 
     def close(self):
         for f in self.files:
