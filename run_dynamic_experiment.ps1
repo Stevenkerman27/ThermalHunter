@@ -21,6 +21,16 @@ function Invoke-Stage {
     }
 }
 
+$NormalizationStats = Join-Path $PSScriptRoot "trainresult\dynamic_observation_normalizer.json"
+if (-not (Test-Path -LiteralPath $NormalizationStats -PathType Leaf)) {
+    Invoke-Stage "Sample dynamic observation normalization" @(
+        "collect_dynamic_observation_stats.py"
+    )
+}
+else {
+    Write-Host "=== Reuse dynamic observation normalization ==="
+}
+
 Invoke-Stage "Train dynamic PPO" @(
     "train.py",
     "--algo", "ppo"

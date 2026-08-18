@@ -17,7 +17,13 @@ from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
 
 import config
-from training_checkpoint import save_training_checkpoint
+from dynamic_observation import (
+    DynamicObservationNormalizer,
+    default_dynamic_observation_stats_path,
+    load_dynamic_observation_normalizer,
+    save_dynamic_observation_normalizer,
+)
+from training_checkpoint import save_model_artifact, save_training_checkpoint
 from glider_dynamic import (
     DynamicDiscreteActionWrapper,
     DynamicGliderBatchEnv,
@@ -38,17 +44,8 @@ def default_update_log_path():
     return os.path.join(config.TRAIN_RESULT_DIR, "ppo_dynamic_updates.csv")
 
 
-def normalized_dynamic_observation(observation):
-    scale = np.array(
-        [
-            config.DYNAMIC_ENERGY_HEIGHT_OBS_SCALE,
-            config.DYNAMIC_VARIO_OBS_SCALE,
-            config.DYNAMIC_ROLL_CUE_OBS_SCALE,
-            config.DYNAMIC_BANK_OBS_SCALE,
-        ],
-        dtype=np.float32,
-    )
-    return np.asarray(observation, dtype=np.float32) / scale
+def normalized_dynamic_observation(observation, normalizer):
+    return normalizer.normalize(observation)
 
 
 def dynamic_observation_shape():
@@ -56,8 +53,9 @@ def dynamic_observation_shape():
 
 
 class DynamicObservationWrapper(gym.ObservationWrapper):
-    def __init__(self, env):
+    def __init__(self, env, normalizer):
         super().__init__(env)
+        self.normalizer = normalizer
         self.observation_space = gym.spaces.Box(
             low=np.full(dynamic_observation_shape(), -np.inf, dtype=np.float32),
             high=np.full(dynamic_observation_shape(), np.inf, dtype=np.float32),
@@ -65,7 +63,7 @@ class DynamicObservationWrapper(gym.ObservationWrapper):
         )
 
     def observation(self, observation):
-        return normalized_dynamic_observation(observation)
+        return normalized_dynamic_observation(observation, self.normalizer)
 
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
@@ -140,7 +138,54 @@ def make_validation_scenarios(n_episodes):
     return scenarios
 
 
-def evaluate_dynamic_policy(policy_name, scenarios, wind_manager, action_selector, discrete_actions):
+def collect_dynamic_observation_normalizer(h5_paths, seed):
+    if config.DYNAMIC_NORMALIZATION_STEPS <= 0:
+        raise ValueError("config.DYNAMIC_NORMALIZATION_STEPS must be positive")
+    env = DynamicGliderBatchEnv(
+        config.DYNAMIC_NUM_ENVS,
+        h5_paths,
+        memory_mode=True,
+        autoreset=True,
+    )
+    rng = np.random.default_rng(seed)
+    observations = []
+    try:
+        raw_observations, _ = env.reset(seed=seed)
+        observations.append(raw_observations)
+        for _ in range(config.DYNAMIC_NORMALIZATION_STEPS):
+            commands = rng.uniform(0.0, 1.0, size=(env.num_envs, 2))
+            raw_observations, _, _, _, _ = env.step(commands)
+            observations.append(raw_observations)
+    finally:
+        env.close()
+    return DynamicObservationNormalizer.from_samples(np.concatenate(observations, axis=0))
+
+
+def load_or_collect_dynamic_observation_normalizer(h5_paths, seed):
+    stats_path = default_dynamic_observation_stats_path()
+    if os.path.isfile(stats_path):
+        print(f"Loaded dynamic observation normalization from {stats_path}")
+        return load_dynamic_observation_normalizer(stats_path)
+    normalizer = collect_dynamic_observation_normalizer(h5_paths, seed)
+    save_dynamic_observation_normalizer(normalizer, stats_path)
+    print(f"Saved dynamic observation normalization to {stats_path}")
+    return normalizer
+
+
+def annealed_entropy_coefficient(initial_coefficient, iteration, num_iterations):
+    if num_iterations <= 0 or not 1 <= iteration <= num_iterations:
+        raise ValueError("entropy schedule iteration must be within a positive iteration count")
+    if num_iterations == 1:
+        return initial_coefficient
+    fraction = 1.0 - (iteration - 1.0) / (num_iterations - 1.0)
+    return config.PPO_ENT_COEF_FINAL + (
+        initial_coefficient - config.PPO_ENT_COEF_FINAL
+    ) * fraction
+
+
+def evaluate_dynamic_policy(
+    policy_name, scenarios, wind_manager, action_selector, discrete_actions, normalizer
+):
     records = []
     for start in range(0, len(scenarios), config.DYNAMIC_NUM_ENVS):
         batch_scenarios = scenarios[start:start + config.DYNAMIC_NUM_ENVS]
@@ -152,7 +197,7 @@ def evaluate_dynamic_policy(policy_name, scenarios, wind_manager, action_selecto
                 seed=config.EVAL_SEED + start,
                 options=batch_scenarios,
             )
-            observations = normalized_dynamic_observation(raw_observations)
+            observations = normalized_dynamic_observation(raw_observations, normalizer)
             episode_returns = np.zeros(env.num_envs, dtype=np.float64)
             episode_steps = np.zeros(env.num_envs, dtype=np.int64)
             active = np.ones(env.num_envs, dtype=bool)
@@ -188,7 +233,7 @@ def evaluate_dynamic_policy(policy_name, scenarios, wind_manager, action_selecto
                         }
                     )
                 active &= ~finished
-                observations = normalized_dynamic_observation(raw_observations)
+                observations = normalized_dynamic_observation(raw_observations, normalizer)
         finally:
             env.close()
     return records
@@ -211,10 +256,10 @@ def summarize_validation(global_step, records):
     return summary
 
 
-def make_env(seed, capture_video, run_name):
+def make_env(seed, capture_video, run_name, normalizer):
     def thunk():
         env = DynamicGliderEnv(dynamic_wind_paths(), memory_mode=True)
-        env = DynamicObservationWrapper(env)
+        env = DynamicObservationWrapper(env, normalizer)
         env = gym.wrappers.RescaleAction(
             env,
             min_action=np.full(2, -1.0, dtype=np.float32),
@@ -247,7 +292,7 @@ class Args:
     update_epochs: int = config.PPO_UPDATE_EPOCHS
     norm_adv: bool = True
     clip_coef: float = config.PPO_CLIP_COEF
-    clip_vloss: bool = True
+    clip_vloss: bool = config.PPO_CLIP_VLOSS
     ent_coef: float = config.PPO_ENT_COEF
     vf_coef: float = config.PPO_VF_COEF
     max_grad_norm: float = config.PPO_MAX_GRAD_NORM
@@ -286,9 +331,13 @@ def train(args):
     writer.add_text("hyperparameters", "|param|value|\n|-|-|\n%s" % "\n".join(
         f"|{key}|{value}|" for key, value in vars(args).items()
     ))
+    h5_paths = dynamic_wind_paths()
+    normalizer = load_or_collect_dynamic_observation_normalizer(h5_paths, args.seed)
+    model_metadata = {"observation_normalizer": normalizer.to_dict()}
+    writer.add_text("observation_normalizer", str(normalizer.to_dict()))
     envs = DynamicGliderBatchEnv(
         args.num_envs,
-        dynamic_wind_paths(),
+        h5_paths,
         memory_mode=True,
         autoreset=True,
     )
@@ -304,7 +353,7 @@ def train(args):
 
     next_observation, _ = envs.reset(seed=args.seed)
     next_observation = torch.as_tensor(
-        normalized_dynamic_observation(next_observation), dtype=torch.float32, device=device
+        normalized_dynamic_observation(next_observation, normalizer), dtype=torch.float32, device=device
     )
     next_done = torch.zeros(args.num_envs, device=device)
     global_step = 0
@@ -321,6 +370,7 @@ def train(args):
         if args.anneal_lr:
             fraction = 1.0 - (iteration - 1.0) / num_iterations
             optimizer.param_groups[0]["lr"] = fraction * args.learning_rate
+        entropy_coef = annealed_entropy_coefficient(args.ent_coef, iteration, num_iterations)
 
         for step in range(args.num_steps):
             global_step += args.num_envs
@@ -342,7 +392,7 @@ def train(args):
             next_done_np = np.logical_or(terminations, truncations)
             rewards[step] = torch.as_tensor(reward, dtype=torch.float32, device=device)
             next_observation = torch.as_tensor(
-                normalized_dynamic_observation(next_observation_np), dtype=torch.float32, device=device
+                normalized_dynamic_observation(next_observation_np, normalizer), dtype=torch.float32, device=device
             )
             next_done = torch.as_tensor(next_done_np, dtype=torch.float32, device=device)
 
@@ -434,7 +484,7 @@ def train(args):
                 else:
                     value_loss = 0.5 * ((new_value - batch_returns[indices]) ** 2).mean()
                 entropy_loss = entropy.mean()
-                loss = policy_loss - args.ent_coef * entropy_loss + args.vf_coef * value_loss
+                loss = policy_loss - entropy_coef * entropy_loss + args.vf_coef * value_loss
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -445,6 +495,8 @@ def train(args):
         writer.add_scalar("losses/value_loss", value_loss.item(), global_step)
         writer.add_scalar("losses/policy_loss", policy_loss.item(), global_step)
         writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
+        writer.add_scalar("losses/entropy_coef", entropy_coef, global_step)
+        writer.add_scalar("losses/action_std", torch.exp(agent.actor_logstd).mean().item(), global_step)
         writer.add_scalar("losses/clip_fraction", float(np.mean(clip_fractions)), global_step)
         writer.add_scalar("losses/approx_kl", float(np.mean(approx_kls)), global_step)
         writer.add_scalar("losses/explained_variance", explained_variance, global_step)
@@ -456,6 +508,8 @@ def train(args):
                 "policy_loss": policy_loss.item(),
                 "value_loss": value_loss.item(),
                 "entropy": entropy_loss.item(),
+                "entropy_coef": entropy_coef,
+                "action_std": torch.exp(agent.actor_logstd).mean().item(),
                 "approx_kl": float(np.mean(approx_kls)),
                 "clip_fraction": float(np.mean(clip_fractions)),
                 "explained_variance": explained_variance,
@@ -470,6 +524,7 @@ def train(args):
                     (episode_rows, log_path),
                     (update_rows, update_log_path),
                 ),
+                model_metadata,
             )
             print(f"Saved PPO checkpoint to {checkpoint_path}")
             while next_checkpoint_step <= global_step:
@@ -481,9 +536,8 @@ def train(args):
             )
             next_report_episode += config.DYNAMIC_REPORT_EPISODES
 
-    os.makedirs(os.path.dirname(model_path), exist_ok=True)
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    torch.save(agent.state_dict(), model_path)
+    save_model_artifact(agent, model_path, model_metadata)
     pd.DataFrame(episode_rows).to_csv(log_path, index=False)
     pd.DataFrame(update_rows).to_csv(update_log_path, index=False)
     envs.close()

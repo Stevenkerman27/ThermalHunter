@@ -14,7 +14,7 @@ import tyro
 from torch.utils.tensorboard import SummaryWriter
 
 import config
-from training_checkpoint import save_training_checkpoint
+from training_checkpoint import save_model_artifact, save_training_checkpoint
 from glider_dynamic import (
     DynamicDiscreteActionBatchWrapper,
     DynamicDiscreteActionWrapper,
@@ -26,6 +26,7 @@ from train_dqn import QNetwork, ReplayBuffer, linear_schedule
 from train_ppo import (
     DynamicObservationWrapper,
     dynamic_wind_paths,
+    load_or_collect_dynamic_observation_normalizer,
     normalized_dynamic_observation,
 )
 
@@ -42,17 +43,17 @@ def default_update_log_path():
     return os.path.join(config.TRAIN_RESULT_DIR, "dynamic_dqn_updates.csv")
 
 
-def make_env():
+def make_env(normalizer):
     env = DynamicGliderEnv(dynamic_wind_paths(), memory_mode=True)
-    env = DynamicObservationWrapper(env)
+    env = DynamicObservationWrapper(env, normalizer)
     return DynamicDiscreteActionWrapper(env)
 
 
-def make_batch_env():
+def make_batch_env(h5_paths):
     return DynamicDiscreteActionBatchWrapper(
         DynamicGliderBatchEnv(
             config.DYNAMIC_NUM_ENVS,
-            dynamic_wind_paths(),
+            h5_paths,
             memory_mode=True,
             autoreset=True,
         )
@@ -267,7 +268,11 @@ def train(args):
         f"|{key}|{value}|" for key, value in vars(args).items()
     ))
 
-    env = make_batch_env()
+    h5_paths = dynamic_wind_paths()
+    normalizer = load_or_collect_dynamic_observation_normalizer(h5_paths, args.seed)
+    model_metadata = {"observation_normalizer": normalizer.to_dict()}
+    writer.add_text("observation_normalizer", str(normalizer.to_dict()))
+    env = make_batch_env(h5_paths)
     q_network = QNetwork(env.single_observation_space.shape, env.single_action_space.n).to(device)
     target_network = QNetwork(env.single_observation_space.shape, env.single_action_space.n).to(device)
     target_network.load_state_dict(q_network.state_dict())
@@ -277,7 +282,7 @@ def train(args):
     )
 
     observation, _ = env.reset(seed=args.seed)
-    observation = normalized_dynamic_observation(observation)
+    observation = normalized_dynamic_observation(observation, normalizer)
     episode_returns = np.zeros(args.num_envs, dtype=np.float64)
     episode_lengths = np.zeros(args.num_envs, dtype=np.int64)
     episode_actions = [[] for _ in range(args.num_envs)]
@@ -289,6 +294,8 @@ def train(args):
     next_train_step = args.learning_starts
     next_target_step = args.target_network_frequency
     start_time = time.time()
+    last_loss = None
+    last_q_value = None
 
     try:
         while global_step < args.total_timesteps:
@@ -316,7 +323,7 @@ def train(args):
             done = np.logical_or(terminations, truncations)
             replay_buffer.add(
                 observation[active_mask],
-                normalized_dynamic_observation(next_observation_raw)[active_mask],
+                normalized_dynamic_observation(next_observation_raw, normalizer)[active_mask],
                 actions[active_mask],
                 rewards[active_mask],
                 done[active_mask],
@@ -360,10 +367,8 @@ def train(args):
                 episode_lengths[env_index] = 0
                 episode_actions[env_index] = []
 
-            observation = normalized_dynamic_observation(next_observation_raw)
+            observation = normalized_dynamic_observation(next_observation_raw, normalizer)
             global_step += active_count
-            last_loss = None
-            last_q_value = None
             while next_train_step <= global_step:
                 data = replay_buffer.sample(args.batch_size)
                 with torch.no_grad():
@@ -396,10 +401,16 @@ def train(args):
 
             while len(episode_rows) >= next_report_episode:
                 steps_per_second = int(global_step / (time.time() - start_time))
+                report_rows = episode_rows[
+                    next_report_episode - config.DYNAMIC_REPORT_EPISODES:next_report_episode
+                ]
+                mean_episode_return = float(np.mean([row["return"] for row in report_rows]))
+                mean_episode_length = float(np.mean([row["length"] for row in report_rows]))
                 print(
                     f"step={global_step} td_loss={last_loss if last_loss is not None else float('nan'):.4f} "
                     f"q_values={last_q_value if last_q_value is not None else float('nan'):.4f} "
-                    f"episodes={next_report_episode} SPS={steps_per_second}"
+                    f"episodes={next_report_episode} mean_ep_return={mean_episode_return:.4f} "
+                    f"mean_ep_length={mean_episode_length:.1f} SPS={steps_per_second}"
                 )
                 if last_loss is not None:
                     writer.add_scalar("losses/td_loss", last_loss, global_step)
@@ -416,6 +427,7 @@ def train(args):
                         (episode_rows, log_path),
                         (update_rows, update_log_path),
                     ),
+                    model_metadata,
                 )
                 print(f"Saved dynamic DQN checkpoint to {checkpoint_path}")
                 while next_checkpoint_step <= global_step:
@@ -424,9 +436,8 @@ def train(args):
         env.close()
         writer.close()
 
-    os.makedirs(os.path.dirname(model_path), exist_ok=True)
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    torch.save(q_network.state_dict(), model_path)
+    save_model_artifact(q_network, model_path, model_metadata)
     pd.DataFrame(episode_rows).to_csv(log_path, index=False)
     pd.DataFrame(update_rows).to_csv(update_log_path, index=False)
     print(f"Saved dynamic DQN model to {model_path}")

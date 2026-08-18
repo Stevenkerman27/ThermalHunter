@@ -7,9 +7,11 @@ import pandas as pd
 import torch
 
 import config
+from dynamic_observation import DynamicObservationNormalizer
 from glider_discrete_simp import RBWindField
 from glider_dynamic import DynamicDiscreteActionWrapper, DynamicGliderEnv
 from train_dqn import QNetwork
+from training_checkpoint import load_model_artifact
 from train_ppo import (
     DynamicObservationWrapper,
     PPOAgent,
@@ -33,9 +35,9 @@ def make_scenarios(n_episodes):
     return make_validation_scenarios(n_episodes)
 
 
-def make_env(wind_manager, discrete_actions=False):
+def make_env(wind_manager, normalizer, discrete_actions=False):
     env = DynamicGliderEnv(wind_manager=wind_manager)
-    env = DynamicObservationWrapper(env)
+    env = DynamicObservationWrapper(env, normalizer)
     if discrete_actions:
         return DynamicDiscreteActionWrapper(env)
     return torch_action_env(env)
@@ -53,24 +55,30 @@ def torch_action_env(env):
 
 def load_ppo_agent(model_path, device):
     agent = PPOAgent(dynamic_observation_shape(), (2,)).to(device)
-    agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    state_dict, metadata = load_model_artifact(model_path, device)
+    if set(metadata) != {"observation_normalizer"}:
+        raise ValueError("PPO model artifact has invalid metadata")
+    agent.load_state_dict(state_dict)
     agent.eval()
-    return agent
+    return agent, DynamicObservationNormalizer.from_dict(metadata["observation_normalizer"])
 
 
 def load_dynamic_dqn_agent(model_path, device):
     action_count = config.DYNAMIC_DQN_ACTION_LEVELS ** 2
     agent = QNetwork(dynamic_observation_shape(), action_count).to(device)
-    agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    state_dict, metadata = load_model_artifact(model_path, device)
+    if set(metadata) != {"observation_normalizer"}:
+        raise ValueError("dynamic DQN model artifact has invalid metadata")
+    agent.load_state_dict(state_dict)
     agent.eval()
-    return agent
+    return agent, DynamicObservationNormalizer.from_dict(metadata["observation_normalizer"])
 
 
-def _evaluate_policy_single(policy_name, scenarios, wind_manager, agent=None, device=None):
+def _evaluate_policy_single(policy_name, scenarios, wind_manager, normalizer, agent=None, device=None):
     records = []
     random_generator = np.random.default_rng(config.EVAL_SEED + 1)
     discrete_actions = policy_name in ("Random grid", "Cruise", "DQN")
-    env = make_env(wind_manager, discrete_actions=discrete_actions)
+    env = make_env(wind_manager, normalizer, discrete_actions=discrete_actions)
     try:
         for scenario_index, scenario in enumerate(scenarios):
             observation, info = env.reset(seed=config.EVAL_SEED + scenario_index, options=scenario)
@@ -121,7 +129,7 @@ def _evaluate_policy_single(policy_name, scenarios, wind_manager, agent=None, de
     return records
 
 
-def evaluate_policy(policy_name, scenarios, wind_manager, agent=None, device=None):
+def evaluate_policy(policy_name, scenarios, wind_manager, normalizer, agent=None, device=None):
     discrete_actions = policy_name in ("Random grid", "Cruise", "DQN")
     random_generator = np.random.default_rng(config.EVAL_SEED + 1)
     if policy_name == "Random grid":
@@ -152,7 +160,7 @@ def evaluate_policy(policy_name, scenarios, wind_manager, agent=None, device=Non
     else:
         raise ValueError(f"unsupported dynamic policy: {policy_name}")
     return evaluate_dynamic_policy(
-        policy_name, scenarios, wind_manager, select_action, discrete_actions
+        policy_name, scenarios, wind_manager, select_action, discrete_actions, normalizer
     )
 
 
@@ -230,15 +238,15 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     scenarios = make_scenarios(args.n)
-    ppo_agent = load_ppo_agent(args.model, device)
-    dqn_agent = load_dynamic_dqn_agent(args.dqn_model, device)
+    ppo_agent, ppo_normalizer = load_ppo_agent(args.model, device)
+    dqn_agent, dqn_normalizer = load_dynamic_dqn_agent(args.dqn_model, device)
     wind_manager = RBWindField(dynamic_wind_paths(), memory_mode=True)
     try:
         records = []
-        records.extend(evaluate_policy("Random grid", scenarios, wind_manager))
-        records.extend(evaluate_policy("Cruise", scenarios, wind_manager))
-        records.extend(evaluate_policy("PPO", scenarios, wind_manager, agent=ppo_agent, device=device))
-        records.extend(evaluate_policy("DQN", scenarios, wind_manager, agent=dqn_agent, device=device))
+        records.extend(evaluate_policy("Random grid", scenarios, wind_manager, ppo_normalizer))
+        records.extend(evaluate_policy("Cruise", scenarios, wind_manager, ppo_normalizer))
+        records.extend(evaluate_policy("PPO", scenarios, wind_manager, ppo_normalizer, agent=ppo_agent, device=device))
+        records.extend(evaluate_policy("DQN", scenarios, wind_manager, dqn_normalizer, agent=dqn_agent, device=device))
     finally:
         wind_manager.close()
     results = pd.DataFrame(records)

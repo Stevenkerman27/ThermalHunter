@@ -302,7 +302,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tabular-model", default=config.SAVE_PATH)
     parser.add_argument("--dqn-model", default=config.DQN_SAVE_PATH)
-    parser.add_argument("--sensor-stats", default=os.path.join(config.BASE_DIR, "sensor_stats.json"))
+    from analyze_bins import sensor_stats_path
+    parser.add_argument("--sensor-stats", default=sensor_stats_path())
     parser.add_argument("--w-accel-weight", type=float, default=config.REWARD_W_ACCEL_WEIGHT)
     parser.add_argument("--output-csv", default=os.path.join(config.TRAIN_RESULT_DIR, "evaluation_episodes.csv"))
     parser.add_argument("--output-plot", default=os.path.join(config.TRAIN_RESULT_DIR, "compare_eval_result.png"))
@@ -384,7 +385,7 @@ def main():
         results["Tabular Q"].append(evaluator.gliders[1]["h_final"] - evaluator.gliders[1]["h_start"])
         results["DQN"].append(evaluator.gliders[2]["h_final"] - evaluator.gliders[2]["h_start"])
         
-        if (ep + 1) % 50 == 0:
+        if (ep + 1) % 20 == 0:
             print(f"Episode {ep+1}/{n_episodes} complete. Time elapsed: {time.time() - start_time:.1f}s")
 
     print(f"\n--- Evaluation Results ---")

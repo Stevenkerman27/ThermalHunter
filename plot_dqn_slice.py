@@ -70,7 +70,9 @@ def main():
         'legend.fontsize': 20
     })
 
-    stats_path = os.path.join(config.BASE_DIR, "sensor_stats.json")
+    from analyze_bins import sensor_stats_path
+
+    stats_path = sensor_stats_path()
     with open(stats_path, "r") as f:
         sensor_stats = json.load(f)
         

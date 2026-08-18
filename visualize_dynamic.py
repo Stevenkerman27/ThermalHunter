@@ -11,6 +11,7 @@ import pandas as pd
 import torch
 
 import config
+from dynamic_observation import DynamicObservationNormalizer
 from glider_discrete_simp import RBWindField
 from glider_dynamic import (
     DynamicDiscreteActionWrapper,
@@ -27,6 +28,7 @@ from train_ppo import (
     dynamic_wind_paths,
     normalized_dynamic_observation,
 )
+from training_checkpoint import load_model_artifact
 
 
 OUTPUT_ROOT = Path(config.TRAIN_RESULT_DIR) / "dynamic_visualization"
@@ -53,23 +55,30 @@ def make_scenario(seed):
 
 def load_agents(ppo_model_path, dqn_model_path, device):
     ppo_agent = PPOAgent(dynamic_observation_shape(), (2,)).to(device)
-    ppo_agent.load_state_dict(
-        torch.load(ppo_model_path, map_location=device, weights_only=True)
-    )
+    ppo_state_dict, ppo_metadata = load_model_artifact(ppo_model_path, device)
+    if set(ppo_metadata) != {"observation_normalizer"}:
+        raise ValueError("PPO model artifact has invalid metadata")
+    ppo_agent.load_state_dict(ppo_state_dict)
     ppo_agent.eval()
 
     dqn_action_count = config.DYNAMIC_DQN_ACTION_LEVELS ** 2
     dqn_agent = QNetwork(dynamic_observation_shape(), dqn_action_count).to(device)
-    dqn_agent.load_state_dict(
-        torch.load(dqn_model_path, map_location=device, weights_only=True)
-    )
+    dqn_state_dict, dqn_metadata = load_model_artifact(dqn_model_path, device)
+    if set(dqn_metadata) != {"observation_normalizer"}:
+        raise ValueError("dynamic DQN model artifact has invalid metadata")
+    dqn_agent.load_state_dict(dqn_state_dict)
     dqn_agent.eval()
-    return ppo_agent, dqn_agent
+    return (
+        ppo_agent,
+        DynamicObservationNormalizer.from_dict(ppo_metadata["observation_normalizer"]),
+        dqn_agent,
+        DynamicObservationNormalizer.from_dict(dqn_metadata["observation_normalizer"]),
+    )
 
 
-def make_policy_env(wind_manager, policy_name):
+def make_policy_env(wind_manager, policy_name, normalizer):
     env = DynamicGliderEnv(wind_manager=wind_manager)
-    env = DynamicObservationWrapper(env)
+    env = DynamicObservationWrapper(env, normalizer)
     if policy_name in ("DQN", "Cruise", "Random grid"):
         return DynamicDiscreteActionWrapper(env)
     return gym.wrappers.RescaleAction(
@@ -112,8 +121,20 @@ def append_trajectory_row(rows, base_env, step, command, action_index, reward, d
     )
 
 
-def run_trajectory(policy_name, scenario, wind_manager, ppo_agent, dqn_agent, device, seed, max_steps):
-    env = make_policy_env(wind_manager, policy_name)
+def run_trajectory(
+    policy_name,
+    scenario,
+    wind_manager,
+    ppo_agent,
+    ppo_normalizer,
+    dqn_agent,
+    dqn_normalizer,
+    device,
+    seed,
+    max_steps,
+):
+    normalizer = dqn_normalizer if policy_name == "DQN" else ppo_normalizer
+    env = make_policy_env(wind_manager, policy_name, normalizer)
     base_env = env.unwrapped
     random_generator = np.random.default_rng(seed)
     rows = []
@@ -265,28 +286,29 @@ def save_trajectory_plot(data, policy_name, output_path):
     plt.close(figure)
 
 
-def save_policy_map(policy_name, agent, device, output_path, grid_size=121):
+def save_policy_map(policy_name, agent, normalizer, device, output_path, grid_size=121):
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     vario = np.linspace(
-        -2.0 * config.DYNAMIC_VARIO_OBS_SCALE,
-        2.0 * config.DYNAMIC_VARIO_OBS_SCALE,
+        normalizer.mean[1] - 2.0 * normalizer.std[1],
+        normalizer.mean[1] + 2.0 * normalizer.std[1],
         grid_size,
     )
     roll_cue = np.linspace(
-        -2.0 * config.DYNAMIC_ROLL_CUE_OBS_SCALE,
-        2.0 * config.DYNAMIC_ROLL_CUE_OBS_SCALE,
+        normalizer.mean[2] - 2.0 * normalizer.std[2],
+        normalizer.mean[2] + 2.0 * normalizer.std[2],
         grid_size,
     )
     vario_grid, roll_grid = np.meshgrid(vario, roll_cue)
-    observations = np.stack(
+    raw_observations = np.stack(
         [
-            np.full(vario_grid.size, 0.5, dtype=np.float32),
-            vario_grid.ravel() / config.DYNAMIC_VARIO_OBS_SCALE,
-            roll_grid.ravel() / config.DYNAMIC_ROLL_CUE_OBS_SCALE,
+            np.full(vario_grid.size, 0.5 * config.DOMAIN_SIZE[2], dtype=np.float32),
+            vario_grid.ravel(),
+            roll_grid.ravel(),
             np.zeros(vario_grid.size, dtype=np.float32),
         ],
         axis=1,
     ).astype(np.float32)
+    observations = normalizer.normalize(raw_observations)
 
     observation_tensor = torch.as_tensor(observations, device=device)
     with torch.no_grad():
@@ -401,7 +423,9 @@ def _append_batch_trajectory_row(rows, env, env_index, step, command, action_ind
     )
 
 
-def run_trajectory_batch(tasks, wind_manager, ppo_agent, dqn_agent, device, max_steps):
+def run_trajectory_batch(
+    tasks, wind_manager, ppo_agent, ppo_normalizer, dqn_agent, dqn_normalizer, device, max_steps
+):
     if not tasks or len(tasks) > config.DYNAMIC_NUM_ENVS:
         raise ValueError("trajectory batch must contain between 1 and DYNAMIC_NUM_ENVS tasks")
     scenarios = [make_scenario(config.EVAL_SEED + scenario_index) for _, scenario_index in tasks]
@@ -414,7 +438,6 @@ def run_trajectory_batch(tasks, wind_manager, ppo_agent, dqn_agent, device, max_
     rows = [[] for _ in tasks]
     try:
         raw_observations, _ = env.reset(seed=config.EVAL_SEED, options=scenarios)
-        observations = normalized_dynamic_observation(raw_observations)
         for env_index in range(env.num_envs):
             _append_batch_trajectory_row(
                 rows[env_index], env, env_index, 0, np.array([np.nan, np.nan]), None, 0.0, False
@@ -426,13 +449,21 @@ def run_trajectory_batch(tasks, wind_manager, ppo_agent, dqn_agent, device, max_
             ppo_indices = [index for index, (policy_name, _) in enumerate(tasks) if policy_name == "PPO" and active[index]]
             if ppo_indices:
                 with torch.no_grad():
-                    observation_tensor = torch.as_tensor(observations[ppo_indices], dtype=torch.float32, device=device)
+                    observation_tensor = torch.as_tensor(
+                        normalized_dynamic_observation(raw_observations[ppo_indices], ppo_normalizer),
+                        dtype=torch.float32,
+                        device=device,
+                    )
                     raw_actions = ppo_agent.get_deterministic_action(observation_tensor).cpu().numpy()
                 commands[ppo_indices] = np.clip((raw_actions + 1.0) * 0.5, 0.0, 1.0)
             dqn_indices = [index for index, (policy_name, _) in enumerate(tasks) if policy_name == "DQN" and active[index]]
             if dqn_indices:
                 with torch.no_grad():
-                    observation_tensor = torch.as_tensor(observations[dqn_indices], dtype=torch.float32, device=device)
+                    observation_tensor = torch.as_tensor(
+                        normalized_dynamic_observation(raw_observations[dqn_indices], dqn_normalizer),
+                        dtype=torch.float32,
+                        device=device,
+                    )
                     dqn_actions = dqn_agent(observation_tensor).argmax(dim=1).cpu().numpy()
                 commands[dqn_indices] = dynamic_discrete_action_commands(dqn_actions)
                 for env_index, action in zip(dqn_indices, dqn_actions):
@@ -473,7 +504,6 @@ def run_trajectory_batch(tasks, wind_manager, ppo_agent, dqn_agent, device, max_
             active &= ~done
             if not np.any(active):
                 break
-            observations = normalized_dynamic_observation(raw_observations)
     finally:
         env.close()
     return {task: pd.DataFrame(task_rows) for task, task_rows in zip(tasks, rows)}
@@ -496,12 +526,18 @@ def _main_single():
         raise FileNotFoundError(f"dynamic DQN model not found: {args.dqn_model}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ppo_agent, dqn_agent = load_agents(args.ppo_model, args.dqn_model, device)
+    ppo_agent, ppo_normalizer, dqn_agent, dqn_normalizer = load_agents(
+        args.ppo_model, args.dqn_model, device
+    )
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
     if not args.skip_maps:
-        save_policy_map("PPO", ppo_agent, device, OUTPUT_ROOT / POLICY_DIRS["PPO"] / "policy_map.png")
-        save_policy_map("DQN", dqn_agent, device, OUTPUT_ROOT / POLICY_DIRS["DQN"] / "policy_map.png")
+        save_policy_map(
+            "PPO", ppo_agent, ppo_normalizer, device, OUTPUT_ROOT / POLICY_DIRS["PPO"] / "policy_map.png"
+        )
+        save_policy_map(
+            "DQN", dqn_agent, dqn_normalizer, device, OUTPUT_ROOT / POLICY_DIRS["DQN"] / "policy_map.png"
+        )
 
     if not args.skip_training:
         training_logs = {
@@ -530,7 +566,9 @@ def _main_single():
                     make_scenario(scenario_seed),
                     wind_manager,
                     ppo_agent,
+                    ppo_normalizer,
                     dqn_agent,
+                    dqn_normalizer,
                     device,
                     seed=scenario_seed + policy_index,
                     max_steps=args.max_steps,
@@ -574,11 +612,17 @@ def main():
         raise FileNotFoundError(f"dynamic DQN model not found: {args.dqn_model}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ppo_agent, dqn_agent = load_agents(args.ppo_model, args.dqn_model, device)
+    ppo_agent, ppo_normalizer, dqn_agent, dqn_normalizer = load_agents(
+        args.ppo_model, args.dqn_model, device
+    )
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     if not args.skip_maps:
-        save_policy_map("PPO", ppo_agent, device, OUTPUT_ROOT / POLICY_DIRS["PPO"] / "policy_map.png")
-        save_policy_map("DQN", dqn_agent, device, OUTPUT_ROOT / POLICY_DIRS["DQN"] / "policy_map.png")
+        save_policy_map(
+            "PPO", ppo_agent, ppo_normalizer, device, OUTPUT_ROOT / POLICY_DIRS["PPO"] / "policy_map.png"
+        )
+        save_policy_map(
+            "DQN", dqn_agent, dqn_normalizer, device, OUTPUT_ROOT / POLICY_DIRS["DQN"] / "policy_map.png"
+        )
     if not args.skip_training:
         for policy_name, csv_path in {
             "PPO": os.path.join(config.TRAIN_RESULT_DIR, "ppo_dynamic_training.csv"),
@@ -600,7 +644,9 @@ def main():
                     tasks[start:start + config.DYNAMIC_NUM_ENVS],
                     wind_manager,
                     ppo_agent,
+                    ppo_normalizer,
                     dqn_agent,
+                    dqn_normalizer,
                     device,
                     args.max_steps,
                 )

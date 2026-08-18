@@ -16,12 +16,14 @@ def weight_tag(weight):
 
 def artifact_paths(weight):
     tag = weight_tag(weight)
+    from analyze_bins import sensor_stats_path
+
     return {
         "tabular_model": os.path.join(config.Q_TABLE_DIR, f"q_table_{tag}.pkl"),
         "tabular_log": os.path.join(config.TRAIN_RESULT_DIR, f"tabular_train_{tag}.csv"),
         "dqn_model": os.path.join(config.Q_TABLE_DIR, f"dqn_model_{tag}.pth"),
         "dqn_log": os.path.join(config.TRAIN_RESULT_DIR, f"dqn_train_{tag}.csv"),
-        "sensor_stats": os.path.join(config.BASE_DIR, f"sensor_stats_{tag}.json"),
+        "sensor_stats": sensor_stats_path(tag),
         "dqn_plot": os.path.join(config.TRAIN_RESULT_DIR, f"dqn_train_{tag}.png"),
         "evaluation": os.path.join(config.TRAIN_RESULT_DIR, f"evaluation_{tag}.csv"),
         "comparison_plot": os.path.join(config.TRAIN_RESULT_DIR, f"comparison_{tag}.png"),

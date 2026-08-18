@@ -20,7 +20,7 @@ python train.py --algo dqn
 python train_dqn.py --total-timesteps 1000
 ```
 
-训练开始前，`analyze_bins.collect_sensor_stats()` 用同一套起始帧规则重建传感器统计；随后创建一个 `SyncVectorEnv`，其数量必须为 1。DQN 的输入是 4 维归一化连续观测，输出 9 个控制动作的 Q 值。训练使用经验回放、epsilon-greedy、MSE TD 损失和目标网络更新；可在 GPU 上运行。
+训练开始前，`analyze_bins.collect_sensor_stats()` 用同一套起始帧规则重建 `trainresult/sensor_stats.json`；随后创建一个 `SyncVectorEnv`，其数量必须为 1。DQN 的输入是 4 维归一化连续观测，输出 9 个控制动作的 Q 值。训练使用经验回放、epsilon-greedy、MSE TD 损失和目标网络更新；可在 GPU 上运行。
 
 默认最终模型为 `q_table/dqn_model.pth`，逐回合统计为 `trainresult/dqn_train_stats.csv`，训练曲线为 `trainresult/dqn_train_result.png`，TensorBoard 与阶段检查点写入 `runs/`。参数可显式覆盖模型、CSV、统计和图表路径，供奖励扫描隔离产物。
 
@@ -31,7 +31,7 @@ python train.py --algo ppo
 python train_ppo.py --total-timesteps 1000
 ```
 
-动态 PPO 在一个 `DynamicGliderBatchEnv` 中按 `DYNAMIC_NUM_ENVS` 并行推进多个滑翔机，风场文件集在该训练进程内只加载一份。四维观测按固定尺度归一化；策略使用 Squashed Gaussian，即对高斯样本施加 `tanh` 并在 log-prob 中加入变量变换修正，动作天然位于 `[-1, 1]^2`，再映射至环境的 `[0, 1]^2` 控制语义。实现使用固定长度 rollout、GAE、裁剪策略目标和价值损失。训练控制台每完成 `DYNAMIC_REPORT_EPISODES` 个 episode 打印一次指标。
+动态 PPO 在一个 `DynamicGliderBatchEnv` 中按 `DYNAMIC_NUM_ENVS` 并行推进多个滑翔机，风场文件集在该训练进程内只加载一份。可先独立运行 `python collect_dynamic_observation_stats.py`，生成 `trainresult/dynamic_observation_normalizer.json`；训练会复用该文件，仅在它缺失时顺序运行并关闭一个随机批量环境。实际训练、checkpoint、评估和可视化使用同一份封装在模型工件内的统计量。策略使用 Squashed Gaussian，即对高斯样本施加 `tanh` 并在 log-prob 中加入变量变换修正，动作天然位于 `[-1, 1]^2`，再映射至环境的 `[0, 1]^2` 控制语义。实现使用固定长度 rollout、GAE、裁剪策略目标和未裁剪价值损失；熵系数从 `PPO_ENT_COEF` 线性退火至 `PPO_ENT_COEF_FINAL`。训练控制台每完成 `DYNAMIC_REPORT_EPISODES` 个 episode 打印一次指标。
 
 默认模型、逐回合 CSV 和 TensorBoard 分别为 `q_table/ppo_dynamic_model.pth`、`trainresult/ppo_dynamic_training.csv` 和 `trainresult/ppo_runs/`。另写入 `ppo_dynamic_updates.csv`（loss、entropy、KL、clip fraction、解释方差）。训练过程中不执行策略验证，只按 `DYNAMIC_CHECKPOINT_INTERVAL` 保存 checkpoint；完整评估由独立评估命令执行。
 
@@ -42,10 +42,10 @@ python train.py --algo dynamic-dqn
 python train_dynamic_dqn.py --total-timesteps 1000
 ```
 
-动态 DQN 与 PPO 使用同一批量动态环境、四维观测归一化、奖励和起始帧规则，但通过 25 动作包装器选择速度与滚转命令。实现复用 DQN 的经验回放、epsilon-greedy 和 TD 学习结构，训练控制台与 PPO 一样每完成 `DYNAMIC_REPORT_EPISODES` 个 episode 打印一次指标，并写入 `dynamic_dqn_updates.csv`。
+动态 DQN 与 PPO 使用同一批量动态环境、同一随机预采样规范的四维观测标准化、奖励和起始帧规则，但通过 25 动作包装器选择速度与滚转命令。每个模型独立封装自己的标准化统计量；实现复用 DQN 的经验回放、epsilon-greedy 和 TD 学习结构，训练控制台每完成 `DYNAMIC_REPORT_EPISODES` 个 episode 打印一次最近的 TD 指标及该组 episode 的平均回报、平均长度，并写入 `dynamic_dqn_updates.csv`。
 
 默认模型、逐回合 CSV 和 TensorBoard 分别为 `q_table/dynamic_dqn_model.pth`、`trainresult/dynamic_dqn_training.csv` 和 `trainresult/dynamic_dqn_runs/`。训练过程中不执行策略验证，只按 `DYNAMIC_CHECKPOINT_INTERVAL` 保存 checkpoint；完整评估由独立评估命令执行。
 
 ## 可复现实验条件
 
-所有训练都使用 `config.SEED`，并从 `[60, 100)` 的同一稳定帧范围随机采样，而不是锁定为同一条轨迹。稳态表格 Q 与稳态 DQN 共享风场、物理参数和奖励 `u_z + w_a * a_z`；唯一的奖励权重是 `w_a`。动态 PPO 与动态 DQN 共享动态环境条件和总能量高度增量奖励。训练期间不执行策略验证；两种动态训练都按 `DYNAMIC_CHECKPOINT_INTERVAL` 保存 checkpoint，训练结束后由独立评估命令验证。逐回合日志包含终止原因和动作统计。旧模型及训练产物不属于兼容性契约。
+所有训练都使用 `config.SEED`，并从 `[60, 100)` 的同一稳定帧范围随机采样，而不是锁定为同一条轨迹。稳态表格 Q 与稳态 DQN 共享风场、物理参数和奖励 `u_z + w_a * a_z`；唯一的奖励权重是 `w_a`。动态 PPO 与动态 DQN 共享动态环境条件和总能量高度增量奖励。训练期间不执行策略验证；两种动态训练都按 `DYNAMIC_CHECKPOINT_INTERVAL` 保存 checkpoint，训练结束后由独立评估命令验证。逐回合日志包含终止原因和动作统计。动态模型权重及其四维标准化统计量是同一工件，旧的裸 `state_dict` 模型不兼容并会立即报错。

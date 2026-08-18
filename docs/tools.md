@@ -26,11 +26,11 @@ python visualize_dynamic.py --n 1 --max-steps 600
 
 ## 分析与可视化
 
-- `analyze_bins.py`：按训练起始帧规则运行随机策略，生成稳态 DQN 所需的 `sensor_stats.json`。
+- `analyze_bins.py`：按训练起始帧规则运行随机策略，生成 `trainresult/sensor_stats.json`，供稳态 DQN 使用。
 - `plot_dqn_train.py`：从 `trainresult/dqn_train_stats.csv` 生成稳态 DQN 的回报和净爬升图。
 - `plot_dqn_slice.py`：在传感器网格上绘制稳态 DQN 的策略切片。
 - `readpkl.py`：读取中间表格 Q 文件并绘制离散策略图。
 - `plotwind.py`：读取风场的 `buoyancy`，渲染指定 Y 截面的 XZ GIF。
-- `test_wind_reading.py`：手工诊断跨 HDF5 文件的时间索引和插值，不是 pytest 测试，且其示例域大小不代表主环境尺度。
+- `tests/test_wind_reading.py`：手工诊断跨 HDF5 文件的时间索引和插值，不是 pytest 测试，且其示例域大小不代表主环境尺度。
 
 `make_pkl.py` 是历史规则策略生成器。它固定使用旧的 7 个滚转分箱，与当前环境状态形状不兼容，不能作为当前训练或评估模型。

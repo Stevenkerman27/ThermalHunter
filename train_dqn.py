@@ -81,7 +81,9 @@ def normalize_state(state, sensor_stats):
     return s
 
 def load_sensor_stats(stats_path=None):
-    stats_path = os.path.join(config.BASE_DIR, "sensor_stats.json") if stats_path is None else stats_path
+    from analyze_bins import sensor_stats_path
+
+    stats_path = sensor_stats_path() if stats_path is None else stats_path
     if not os.path.exists(stats_path):
         raise FileNotFoundError(f"sensor statistics not found: {stats_path}")
     with open(stats_path, "r", encoding="utf-8") as f:
@@ -248,8 +250,8 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = args.torch_deterministic
     torch.set_num_threads(config.DQN_TORCH_THREADS)
 
-    from analyze_bins import collect_sensor_stats
-    sensor_stats_path = args.sensor_stats_path or os.path.join(config.BASE_DIR, "sensor_stats.json")
+    from analyze_bins import collect_sensor_stats, sensor_stats_path as default_sensor_stats_path
+    sensor_stats_path = args.sensor_stats_path or default_sensor_stats_path()
     collect_sensor_stats(args.sensor_stats_episodes, sensor_stats_path)
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")

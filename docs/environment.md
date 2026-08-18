@@ -17,7 +17,7 @@
 每个 RL 步包含 `N_PHYS_PER_RL` 次积分，风场每 `RL_STEPS_PER_FRAME` 个 RL 步推进一帧。环境返回两种观测形式：
 
 - 表格 Q：`[aoa_idx, bank_idx, w_accel_bin, delta_w_bin]`，后两项经配置分箱和迟滞得到。
-- 稳态 DQN：`[aoa_idx, bank_idx, w_accel, delta_w]`，训练包装器将索引缩放并用 `sensor_stats.json` 归一化传感器值。
+- 稳态 DQN：`[aoa_idx, bank_idx, w_accel, delta_w]`，训练包装器将索引缩放并用 `trainresult/sensor_stats.json` 归一化传感器值。
 
 `w_accel` 是一个积分步内垂直风速变化率的平均值，`delta_w` 是两个翼尖垂直风速之差的平均值。奖励为 `u_z + reward_w_accel * w_accel`，没有高度变化或生存项。高度到达域高的 10% 或 90% 时终止，风场帧耗尽时截断。
 
@@ -29,6 +29,6 @@
 
 动态环境的原生动作是 `[speed, roll]`，均限制在 `[0, 1]`：`speed=0/1` 分别命令最大/最小迎角，`roll=0/1` 分别命令最小/最大滚转角。迎角和滚转先经过一阶响应，再受速率限制。风场帧以 `DYNAMIC_WIND_SECONDS_PER_FRAME` 表示的飞行时间推进，并在帧之间线性插值。
 
-观测为 `[energy_height, total_energy_vario, wingtip_normal_wind_difference, bank]`：总能量高度、其变化率的低通 variometer、翼尖局部风速差沿升力法向的投影，以及当前滚转角。训练包装器按 `config.py` 的固定尺度归一化这四项。奖励是本 RL 步的总能量高度增量。位置、地速、迎角、滚转和风场时间以四阶 Runge-Kutta 方法共同积分。高度越过 `DYNAMIC_ALTITUDE_MIN_FRACTION` 或 `DYNAMIC_ALTITUDE_MAX_FRACTION` 时终止；到达最后一个风场帧时截断。低于 `DYNAMIC_MIN_TAS` 时只停用该积分子步的气动力和翼尖滚转传感器计算，但重力继续作用，不结束 episode。若 RK4 候选状态非有限，或 TAS 超过 `DYNAMIC_NUMERICAL_MAX_TAS`，该候选子步被丢弃，episode 以 `numerical_divergence` 终止且该 RL 步奖励为零。`info["termination_reason"]` 记录终止或截断原因。
+观测为 `[energy_height, total_energy_vario, wingtip_normal_wind_difference, bank]`：总能量高度、其变化率的低通 variometer、翼尖局部风速差沿升力法向的投影，以及当前滚转角。原始四维观测不变；独立命令 `collect_dynamic_observation_stats.py` 用随机批量 rollout 估计各维均值和标准差，并写入 `trainresult/dynamic_observation_normalizer.json`。动态训练优先复用该文件，仅在其缺失时才采样；每个模型工件还会封装所用统计量，推理时必须随模型加载。奖励是本 RL 步的总能量高度增量。位置、地速、迎角、滚转和风场时间以四阶 Runge-Kutta 方法共同积分。高度越过 `DYNAMIC_ALTITUDE_MIN_FRACTION` 或 `DYNAMIC_ALTITUDE_MAX_FRACTION` 时终止；到达最后一个风场帧时截断。低于 `DYNAMIC_MIN_TAS` 时只停用该积分子步的气动力和翼尖滚转传感器计算，但重力继续作用，不结束 episode。若 RK4 候选状态非有限，或 TAS 超过 `DYNAMIC_NUMERICAL_MAX_TAS`，该候选子步被丢弃，episode 以 `numerical_divergence` 终止且该 RL 步奖励为零。`info["termination_reason"]` 记录终止或截断原因。
 
 动态 PPO 直接使用连续动作。动态 DQN 使用 `DynamicDiscreteActionWrapper`，把速度和滚转各离散为 `DYNAMIC_DQN_ACTION_LEVELS` 个等距命令，形成 25 个动作；包装器只转换动作，不改变动力学、观测或奖励。动态训练每次只创建一个内存风场实例；动态评估让所有策略顺序借用同一个只读实例。

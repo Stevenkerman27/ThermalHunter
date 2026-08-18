@@ -8,9 +8,14 @@ import config
 from glider_discrete_simp import GliderEnv
 
 
+def sensor_stats_path(tag=None):
+    filename = "sensor_stats.json" if tag is None else f"sensor_stats_{tag}.json"
+    return os.path.join(config.TRAIN_RESULT_DIR, filename)
+
+
 def collect_sensor_stats(episodes=None, stats_path=None):
     episodes = config.SENSOR_STATS_EPISODES if episodes is None else episodes
-    stats_path = os.path.join(config.BASE_DIR, "sensor_stats.json") if stats_path is None else stats_path
+    stats_path = sensor_stats_path() if stats_path is None else stats_path
     if episodes <= 0:
         raise ValueError("episodes must be positive")
     h5_files = sorted(

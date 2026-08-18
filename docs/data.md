@@ -12,7 +12,7 @@
 
 ## 传感器统计
 
-`sensor_stats.json` 存在项目根目录，含 `w_accel.mean/std` 与 `delta_w.mean/std`。稳态 DQN 训练会先重建该文件，随后训练和评估都用它归一化连续传感器。统计不存在或标准差为零时，生成或加载环节会报错。
+`trainresult/sensor_stats.json` 含 `w_accel.mean/std` 与 `delta_w.mean/std`。稳态 DQN 训练会先重建该文件，随后训练和评估都用它归一化连续传感器；奖励扫描的对应统计也写入 `trainresult/`。统计不存在或标准差为零时，生成或加载环节会报错。
 
 ## 模型和结果
 

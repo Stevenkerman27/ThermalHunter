@@ -1,12 +1,16 @@
 import os
+import sys
 import numpy as np
 import h5py
 import glob
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from glider_discrete_simp import RBWindField
 
 def test_wind_reading():
     # 1. 路径设置
-    wind_dir = os.path.join(os.path.dirname(__file__), 'wind')
+    wind_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'wind')
     
     # 2. 搜集所有 snapshots 文件并排序
     h5_files = sorted(glob.glob(os.path.join(wind_dir, 'snapshots_s*.h5')))
