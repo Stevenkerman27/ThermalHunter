@@ -372,10 +372,11 @@ def train(args):
             while next_train_step <= global_step:
                 data = replay_buffer.sample(args.batch_size)
                 with torch.no_grad():
-                    target_max = target_network(data.next_observations).max(dim=1).values
+                    next_actions = q_network(data.next_observations).argmax(dim=1, keepdim=True)
+                    target_max = target_network(data.next_observations).gather(1, next_actions).squeeze(1)
                     td_target = data.rewards + args.gamma * target_max * (1.0 - data.dones)
                 old_values = q_network(data.observations).gather(1, data.actions).squeeze(1)
-                loss = F.mse_loss(old_values, td_target)
+                loss = F.smooth_l1_loss(old_values, td_target)
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()

@@ -25,3 +25,5 @@ python eval_dynamic.py --n 10 --model path --dqn-model path
 入口需要 PPO 和动态 DQN 两个模型都存在，且每个模型工件都必须包含其训练时的四维观测标准化统计量。评估开始时只加载一份完整风场数据到内存，策略环境顺序借用该只读资源，完成后统一关闭。输出每个策略和场景的回报、步数、高度变化、总能量高度变化和终止原因到 `trainresult/dynamic_evaluation.csv`，并生成 `trainresult/dynamic_evaluation.png`；图中显示两个指标的箱线、原始点、均值、标准差、中位数和样本数。
 
 动态结果不能与稳态表格 Q 或稳态 DQN 的数值直接作为算法优劣比较，因为环境动力学和奖励不同。
+
+动态 DQN 超参数实验使用固定种子下的 100 个场景进行确认；`height_change` 的场景均值超过 `100 m` 才视为达到目标。

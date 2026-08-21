@@ -42,9 +42,11 @@ python train.py --algo dynamic-dqn
 python train_dynamic_dqn.py --total-timesteps 1000
 ```
 
-动态 DQN 与 PPO 使用同一批量动态环境、同一随机预采样规范的四维观测标准化、奖励和起始帧规则，但通过 25 动作包装器选择速度与滚转命令。每个模型独立封装自己的标准化统计量；实现复用 DQN 的经验回放、epsilon-greedy 和 TD 学习结构，训练控制台每完成 `DYNAMIC_REPORT_EPISODES` 个 episode 打印一次最近的 TD 指标及该组 episode 的平均回报、平均长度，并写入 `dynamic_dqn_updates.csv`。
+动态 DQN 与 PPO 使用同一批量动态环境、同一随机预采样规范的四维观测标准化、奖励和起始帧规则，但通过 `DYNAMIC_DQN_ACTION_LEVELS ** 2` 个离散动作选择速度与滚转命令。每个模型独立封装自己的标准化统计量；实现复用 DQN 的经验回放和 epsilon-greedy 结构，TD 更新使用 Double-DQN 目标和 Huber loss，训练控制台每完成 `DYNAMIC_REPORT_EPISODES` 个 episode 打印一次最近的 TD 指标及该组 episode 的平均回报、平均长度，并写入 `dynamic_dqn_updates.csv`。
 
 默认模型、逐回合 CSV 和 TensorBoard 分别为 `q_table/dynamic_dqn_model.pth`、`trainresult/dynamic_dqn_training.csv` 和 `trainresult/dynamic_dqn_runs/`。训练过程中不执行策略验证，只按 `DYNAMIC_CHECKPOINT_INTERVAL` 保存 checkpoint；完整评估由独立评估命令执行。
+
+动态 DQN 超参数实验以固定评估场景中的 `height_change` 均值为主指标，目标为超过 `100 m`。训练 CSV 和 TD loss 只用于筛选候选模型；候选模型再用 `python eval.py --dynamic --n 100` 做完整确认。实验允许覆盖默认动态 DQN 模型和日志产物。
 
 ## 可复现实验条件
 

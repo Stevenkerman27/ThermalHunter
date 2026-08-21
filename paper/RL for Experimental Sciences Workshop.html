@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="thumbnail"  content="218617630.png"/>
+<meta property="og:image"  content="218617630.png"/>
+<title>RL for Experimental Sciences Workshop</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+<link rel="icon" type="image/x-icon" href="218617630.png">
+
+<style>
+:root{
+--primary:#4b9756;      /* deep olive green */
+--secondary:#84b326;    /* olive / moss */
+--accent:#C2A878;       /* sand / desert */
+--bg:#F6F4EF;           /* warm paper background */
+--bg1: #fffaee;
+--bg2: #fff7d1f5;
+--card:#FFFFFF;
+--text:#2F2F2F;
+--muted:#6E6E6E;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+
+body{
+font-family:"Inter",sans-serif;
+background:var(--bg);
+color:var(--text);
+line-height:1.6;
+}
+
+
+
+.container{
+background: var(--bg);
+max-width:1100px;
+margin:auto;
+padding:0 20px;
+}
+
+.containera{
+/*  background: var(--bg1);*/
+max-width:1100px;
+margin:auto;
+padding:0 20px;
+}
+
+.containerb{
+ /*   background: var(--bg2);*/
+max-width:1100px;
+margin:auto;
+padding:0 20px;
+}
+
+
+/* HERO */
+    header {
+  background:  linear-gradient(135deg,var(--primary),var(--secondary));
+	  /*background: linear-gradient(135deg, #003459, #0096c7);*/
+      color: white;
+      text-align: center;
+      padding: 3rem 1rem;
+    }
+
+header h1{
+font-size:2.7rem;
+font-weight:700;
+margin-bottom:10px;
+}
+
+header h2{
+font-size:2rem;
+font-weight:500;
+opacity:.9;
+margin-bottom:35px;
+}
+
+nav{
+display:flex;
+justify-content:center;
+gap:28px;
+flex-wrap:wrap;
+margin-top:20px;
+}
+
+nav a{
+color:white;
+text-decoration:none;
+font-weight:600;
+opacity:.9;
+}
+
+nav a:hover{opacity:1}
+
+section{
+padding:70px 0;
+}
+
+h3.section-title{
+font-size:1.9rem;
+margin-bottom:35px;
+text-align:center;
+}
+
+p.lead{
+font-size:1.1rem;
+color:var(--muted);
+max-width:850px;
+margin:auto;
+text-align:center;
+}
+
+
+
+.marlel-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 3rem;
+    letter-spacing: 2px;
+    color: white; /* base letters */
+    text-align: center;
+    text-transform: uppercase;
+    margin: 0.2em 0;
+    text-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+}
+
+
+.highlight-rl {
+	font-size: 3.5rem;
+    animation: redPulse 10s infinite ease-in-out;
+}
+
+@keyframes redPulse {
+  0%, 100% {
+    color: white;
+    text-shadow: 0 0 10px rgba(255,255,255,0.8);
+  }
+  50% {
+    color: #ffedad; /* warmer, softer red */
+    text-shadow:
+      0 0 8px rgba(255,200,150,0.9),
+      0 0 16px rgba(255,200,150,0.6),
+      0 0 20px rgba(255,200,150,0.3);
+  }
+}
+/* CARDS */
+.grid{
+display:grid;
+grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+gap:24px;
+margin-top:40px;
+}
+
+.card{
+background:var(--card);
+padding:24px;
+border-radius:16px;
+box-shadow:0 10px 25px rgba(0,0,0,.06);
+transition:all .2s;
+}
+
+.card:hover{
+transform:translateY(-5px);
+box-shadow:0 16px 35px rgba(0,0,0,.1);
+}
+
+.card h4{
+margin-bottom:10px;
+color:var(--primary);
+}
+
+.card p{
+color:var(--muted);
+font-size:.95rem;
+margin-bottom:12px;
+}
+
+.card b{
+color:var(--secondary);
+}
+
+/* SPEAKERS */
+/* SPEAKER CARD LAYOUT */
+
+.speaker{
+display:flex;
+gap:30px;
+align-items:flex-start;
+}
+
+#speakers .grid{
+grid-template-columns:1fr;
+}
+
+/* left column */
+
+.speaker-left{
+width:220px;
+text-align:center;
+flex-shrink:0;
+}
+
+.speaker-left img{
+width:120px;
+height:120px;
+border-radius:50%;
+object-fit:cover;
+margin-bottom:10px;
+}
+
+.affiliation{
+color:var(--muted);
+font-size:.9rem;
+}
+
+/* right column */
+
+.speaker-right{
+flex:1;
+}
+
+.talk-title{
+color:var(--primary);
+margin-bottom:10px;
+}
+
+.abstract{
+color:var(--muted);
+font-size:.95rem;
+line-height:1.5;
+}
+
+/* TIMELINE */
+.timeline{
+max-width:700px;
+margin:auto;
+border-left:3px solid var(--secondary);
+padding-left:25px;
+}
+
+.timeline h4{
+font-size:1.2rem;
+font-weight:600;
+/*border-left:4px solid var(--secondary);*/
+padding-left:10px;
+}
+
+.timeline-item{
+margin-bottom:22px;
+}
+
+.timeline-item span{
+font-weight:600;
+color:var(--secondary);
+}
+
+/* CFP BOX */
+.cfp{
+background:linear-gradient(135deg,var(--secondary),var(--accent));
+color:white;
+padding:40px;
+border-radius:16px;
+text-align:center;
+margin-top:40px;
+}
+
+.cfp h4{
+font-size:1.4rem;
+margin-bottom:15px;
+}
+
+.btn{
+background:white;
+color:var(--secondary);
+padding:10px 18px;
+border-radius:8px;
+text-decoration:none;
+font-weight:600;
+margin-top:15px;
+display:inline-block;
+}
+
+footer{
+text-align:center;
+padding:40px 20px;
+font-size:.9rem;
+color:var(--muted);
+}
+
+@media(max-width:700px){
+header h1{font-size:2rem}
+}
+
+</style>
+</head>
+
+<body>
+
+<header>
+
+<h1 class="marlel-title">Reinforcement Learning for <br><span class="highlight-rl">Experimental Sciences</span></h1>
+<h2>Bridging the Simulation‑to‑Reality Gap</h2>
+
+<p>Workshop at the Neural Information Processing Systems 2026 conference (Paris)</p>
+
+<nav>
+<a href="#about">About</a>
+<a href="#topics">Topics</a>
+<a href="#speakers">Speakers</a>
+<a href="#program">Program</a>
+<a href="#cfp">Call for Papers</a>
+<a href="#organizers">Organizers</a>
+</nav>
+
+</header>
+
+
+<section id="about"  style="background: var(--bg1);">
+<div class="containera">
+
+<h3 class="section-title">Workshop Motivation</h3>
+
+<p class="lead">
+Reinforcement learning has achieved major breakthroughs in simulated environments, yet transferring these advances to real experimental systems remains challenging. This workshop explores how RL can enable adaptive experimentation and real-world scientific discovery while addressing the simulation-to-reality gap.
+</p>
+
+<div class="grid">
+
+<div class="card">
+<h4>Experimental Systems as Sequential Decisions</h4>
+<p>
+Many scientific experiments can naturally be formulated as sequential decision processes in which each experimental action influences future observations. Reinforcement learning provides a principled framework to optimize such adaptive decision loops.
+</p>
+</div>
+
+
+<div class="card">
+<h4>Simulation-to-Reality Gap</h4>
+<p>
+Differences between simulations and physical systems create major challenges for deploying reinforcement learning in laboratory and field experiments.
+</p>
+</div>
+
+
+<div class="card">
+<h4>Reducing Experimental Cost and Time</h4>
+<p>
+Many scientific experiments are costly, slow, or resource-constrained. Reinforcement learning methods can help allocate experimental effort more efficiently, accelerating discovery while reducing material, time, and financial costs.
+</p>
+</div>
+
+</div>
+
+</div>
+</section>
+
+
+<section id="topics" style="background: var(--bg2);">
+<div class="containerb">
+
+<h3 class="section-title">Research Topics</h3>
+
+<div class="grid">
+
+<div class="card">
+<h4>RL for Experimental Platforms</h4>
+<p>Adaptive experiment design, autonomous laboratories, and sequential optimization in scientific experiments.</p>
+</div>
+
+<div class="card">
+<h4>Bridging the Sim‑to‑Real Gap</h4>
+<p>Domain randomization, system identification, hybrid training pipelines, and robust policy transfer.</p>
+</div>
+
+<div class="card">
+<h4>Efficient and Safe Learning</h4>
+<p>Sample-efficient reinforcement learning, Hypothesis testing, S-values (E-values), safe exploration, uncertainty-aware decision making.</p>
+</div>
+
+<div class="card">
+<h4>Field & Clinical Experiments</h4>
+<p>Agricultural & Medical experimentation, ecological monitoring, and environmental sensing systems.</p>
+</div>
+
+<div class="card">
+<h4>Human-in-the-Loop Science</h4>
+<p>Human–AI collaboration in experimentation and participatory research frameworks.</p>
+</div>
+
+<div class="card">
+<h4>Benchmarks & Infrastructure</h4>
+<p>Simulation environments, digital twins, and benchmarking platforms for RL in experimental science.</p>
+</div>
+
+</div>
+
+</div>
+</section>
+
+
+<section id="speakers" style="background: var(--bg1);">
+<div class="containera">
+
+<h3 class="section-title">Invited Speakers</h3>
+
+<div class="grid">
+
+<div class="card speaker">
+
+<div class="speaker-left">
+<img src="speakers/SimonHirlander.jpg">
+<h4>Simon Hirländer</h4>
+<p class="affiliation">University of Salzburg</p>
+</div>
+
+<div class="speaker-right">
+<h4 class="talk-title">
+Koopman Stabilised Symplectic World Models for Safe Offline-to-Online RL in Particle Accelerators
+</h4>
+
+<p class="abstract">
+Particle accelerators generate vast amounts of historical
+data from logs, yet learning-based control often still relies on risky
+online optimisation. To better utilise this data and avoid online
+exploration, we present an offline reinforcement learning (RL) workflow.
+First, we use XSuite to generate high-fidelity trajectories for steering
+tasks across representative scenarios, including optics variations,
+alignment errors and jitter, yielding a synthetic dataset of expert and
+non-expert behaviour. Second, we learn an uncertainty-aware,
+Koopman-stabilised world model from this data, in which nonlinear beam
+dynamics are lifted into a latent space with approximately linear,
+spectrally constrained evolution and a regularised residual term. This
+structure provides numerically stable long-horizon rollouts and
+estimates of epistemic uncertainty in latent space. The resulting
+surrogate environment enables model-based offline RL, where policies are
+optimised entirely on pre-generated data while epistemic uncertainty is
+used to detect distribution shift and enforce soft safety constraints.
+We benchmark these offline RL policies against a PPO agent trained
+directly in simulation. Results show that policies trained purely
+offline on the Koopman world model can match online PPO performance
+without requiring any interaction with the real machine. This
+demonstrates a safe, reproducible pathway for turning historical
+accelerator data into effective learning-based control policies.
+</p>
+</div>
+
+</div>
+
+	
+<div class="card speaker">
+<div class="speaker-left">
+<img src="speakers/SofiaVillar.jpg">
+<h4>Sofia Villar</h4>
+<p class="affiliation">University of Cambridge</p>
+</div>
+
+<div class="speaker-right">
+<h4 class="talk-title">
+RL, Bandits, and the Learning-Earning Dilemma for Clinical Trial Design
+</h4>
+
+<p class="abstract">
+In machine learning literature, multi-armed bandits and reinforcement learning are heavily celebrated for optimizing the "learning-earning" trade-off—balancing the exploration of unknown actions to gather data with the exploitation of known actions to maximize immediate rewards. When applying these sequential decision-making frameworks to confirmatory clinical trial design, this trade-off manifests as a profound ethical and statistical tension: maximizing care for current trial participants versus optimizing scientific data gathered to benefit future patients.
+<br>
+However, translating multi-armed bandits and adaptive optimization algorithms into real-world clinical trial architectures introduces significant methodological bottlenecks. Most notably, adaptively collected data destroys the independent and identically distributed (i.i.d.) assumptions of classical statistics, making error control notoriously difficult. While clinical trial efficiency is paramount—especially given small sample size constraints—strict regulatory standardisation demands that Type I error rate inflation must be completely mitigated. To date, the adoption of these methods in confirmatory trials is practically zero, despite gaining some traction in early-phase drug development.
+<br>
+In this talk, I will provide a comprehensive overview of the mathematical, operational, and regulatory challenges that arise when bridging advanced reinforcement learning concepts with clinical trial design. Finally, I will present a suite of specific solutions developed in our group. These approaches successfully close the loop by blending multi-objective adaptive optimization during the design phase with robust, adjusted statistical analysis at the study’s conclusion, ensuring both trial efficiency and regulatory compliance.
+</p>
+</div>
+
+</div>
+	
+
+<div class="card speaker">
+
+<div class="speaker-left">
+<img src="speakers/AlexHernandezGarcia.png">
+<h4>Alex Hernandez-Garcia</h4>
+<p class="affiliation">Université de Montréal & Mila, Canada</p>
+</div>
+
+<div class="speaker-right">
+<h4 class="talk-title">
+GFlowNets to generate materials and molecules with desirable properties and constraints
+</h4>
+
+<p class="abstract">TBD</p>
+</div>
+
+</div>
+
+
+<div class="card speaker">
+
+<div class="speaker-left">
+<img src="speakers/OlaEngkvist.jpg">
+<h4>Ola Engkvist</h4>
+<p class="affiliation">Discovery Sciences, R&D AstraZeneca & Department of Computer Science and Engineering, Chalmers University of Technology and University of Gothenburg, Gothenburg</p>
+</div>
+
+<div class="speaker-right">
+<h4 class="talk-title">
+Navigating the chemical space with reinforcement learning.
+</h4>
+
+<p class="abstract">Accelerating the delivery of novel clinical candidates to address unmet medical need remains a central challenge in <strong>drug discovery</strong>. 
+	<strong>Machine learning</strong>, <strong>artificial intelligence</strong>, and <strong>automation</strong> offer a promising framework for addressing this challenge by enabling both the generation of novel molecular structures and the prediction of their properties. Once these generative and predictive components are established, a key remaining question is how to navigate the vast and relevant chemical space efficiently.
+<br>The number of potentially interesting molecules accessible in a drug discovery project is extraordinarily large, 
+	with the relevant chemical space often estimated to contain up to 10^60 molecules. This scale demands efficient and unbiased strategies for molecular design and prioritization. 
+	<strong>Reinforcement learning</strong> has emerged as a powerful approach for guiding the search toward molecules that satisfy multiple design objectives simultaneously.
+<br>The open-source platform <strong>REINVENT</strong> was among the first tools developed to address this challenge in <strong>small-molecule drug discovery</strong>. 
+	Since its introduction, REINVENT has evolved substantially, with continued methodological and practical enhancements. 
+	This presentation will discuss the development of REINVENT and highlight recent advances aimed at further improving chemical space navigation, including <strong>3D molecular generation</strong> and 
+	<strong>human-in-the-loop</strong> methodologies.
+</p>
+</div>
+
+</div>
+
+</div>
+</section>
+
+
+<section id="program" style="background: var(--bg2);">
+<div class="containerb">
+
+<h3 class="section-title">Program</h3>
+
+<div class="grid">
+
+<!-- Morning Session -->
+
+<div class="card">
+<h4 style="margin-bottom:15px;color:var(--primary)">Morning Session</h4>
+
+<p><b>08:15 – 08:30</b><br>
+Opening remarks and introduction</p>
+
+<p><b>08:30 – 09:15</b><br>
+Invited talk: Alex Hernandez-Garcia </p>
+
+<p><b>09:15 – 10:00</b><br>
+Invited talk: Sofia Villar</p>
+
+<p><b>10:00 – 10:15</b><br>
+Coffee break</p>
+
+<p><b>10:15 – 11:15</b><br>
+Contributed spotlight talks (6 × 10 min)</p>
+
+<p><b>11:15 – 11:45</b><br>
+Panel discussion: <strong>“Can RL Become a Standard Tool for Experimental Science?”</strong></p>
+	
+	<p><b>11:45 – 12:30</b><br>
+	Poster session and discussion to facilitate networking</p>
+</div>
+<!-- Afternoon Session -->
+
+<div class="card">
+<h4 style="margin-bottom:15px;color:var(--primary)">Afternoon Session</h4>
+	<p><b>12:30 – 14:00</b><br> Lunch break
+	</p>
+<p><b>14:00 – 14:45</b><br>
+Invited talk: Ola Engkvist</p>
+
+<p><b>14:45 – 15:30</b><br>
+Invited talk: Simon Hirländer</p>
+
+<p><b>15:30 – 16:00</b><br>
+Coffee break</p>
+
+<p><b>16:00 – 16:45</b><br>
+Poster session and discussion to facilitate networking</p>
+
+<p><b>16:45 – 17:00</b><br>
+Closing discussion: <strong>“Open challenges in RL for experimental sciences”</strong> </p>
+
+</div>
+
+</div>
+
+</div>
+</section>
+
+
+<section id="cfp" style="background: var(--bg1);">
+<div class="containera">
+
+<h3 class="section-title">Call for Papers</h3>
+
+<p class="lead">
+We invite submissions describing reinforcement learning methods applied to real-world experimental systems, including research papers, system descriptions, benchmarks, and position papers.
+We will put efforts to include diverse participants. 
+	We encourage participation from both machine learning researchers and experimental scientists, practitioners, and interdisciplinary scientists.</p>
+
+	
+<p style="margin-top:30px"><strong>Formatting Instructions:</strong> We solicit workshop papers following the <a href="https://media.neurips.cc/Conferences/NeurIPS2026/Formatting_Instructions_For_NeurIPS_2026.zip">NeurIPS 2026 main conference paper template</a>. 
+  The main text of a submitted paper is limited to nine content pages, including all figures and tables. Additional pages containing references, optional technical appendices and mandatory paper checklist do not count as content pages. 
+The maximum size of submissions is 50 MB. While your submission can contain a supplement or appendix, please note that reviewers are not obliged to review supplementary material. 
+</p>
+
+<p><strong>Reviews:</strong> The review process will be double-blind. All submissions must be anonymized and the leakage of any identification information is prohibited. All submissions will undergo peer review by the Program Committee. Each submission will receive at least three reviews, followed by a discussion phase among reviewers and organizers.</p>
+
+<p><strong>Presentation:</strong> Accepted contributions will be presented as posters, with a subset selected for spotlight presentations.</p>
+
+<p><strong>What can be submitted:</strong> Following the convention of most workshops, we welcome submissions of papers already published in journals or presented at non–machine-learning conferences or workshops. If a paper has appeared in a machine-learning venue, we will consider it only if it includes substantial extensions or new results.</p>
+	
+<div class="cfp">
+
+<h4>Submission Timeline</h4>
+
+<p>
+Submission deadline: August 29, 2026<br>
+Notification: September 29, 2026<br>
+Camera-ready: November 29, 2026<br>
+Workshop: December 12 (Saturday), 2026
+</p>
+
+<a class="btn" href="https://openreview.net/group?id=NeurIPS.cc/2026/Workshop/RL4XS">Submission Portal</a>
+
+</div>
+
+</div>
+</section>
+
+
+<section id="organizers" style="background: var(--bg2);">
+<div class="containerb">
+
+<h3 class="section-title">Organizers</h3>
+
+<div class="grid">
+
+<div class="card">
+<h4>Odalric‑Ambrym Maillard</h4>
+<p>INRIA & University of Lille, France</p>
+<p>He is a senior researcher at Inria Lille, in the SCoOL team-project and CRIStAL laboratory, and head of the MARLEL consortium. He is 
+	working on the foundations of reinforcement learning and sequential statistics with a focus on regret, robustness, and scientific experimentation. He actively develops interdisciplinary applications of RL in fields such as agronomy and medicine.</p>
+</div>
+
+<div class="card">
+<h4>Ronald Ortner</h4>
+<p>Technical University of
+Leoben, Austria</p>
+<p>He is an Associate Professor at the Technical University of Leoben specializing in theoretical reinforcement learning, particularly regret analysis in Markov decision processes. His work focuses on designing sample-efficient algorithms suited to the stringent data regimes of experimental sciences.</p>
+</div>
+
+<div class="card">
+<h4>Audrey Durand</h4>
+<p>Université Laval, Canada</p>
+<p>She is an Associate Professor at Université Laval and Mila research affiliate, working on interactive machine learning, including reinforcement learning, bandits, and active learning. Her research emphasizes learning systems that actively shape their data acquisition, with applications in healthcare and real-world decision systems.</p>
+</div>
+	
+<div class="card">
+<h4>Sadegh Talebi</h4>
+<p>University of Copenhagen, Denmark</p>
+<p>He is an Assistant Professor at the University of Copenhagen whose research focuses on uncertainty-aware, risk-sensitive reinforcement learning and decision-making. He develops methods for reliable adaptive experimentation under uncertainty, with applications to safety-critical and model-based scientific systems.</p>
+</div>
+
+
+
+<div class="card">
+<h4>Samba Diaw</h4>
+<p>Higher Polytechnic School, Cheikh Anta DIOP University, Senegal</p>
+<p>He is an Associate Professor at Cheikh Anta Diop University of Dakar, working on AI applications in environmental, agricultural, and health domains. His work includes reinforcement learning for sustainable agriculture, ecological modeling, and language technologies for local African languages.</p>
+</div>
+	
+<div class="card">
+<h4>Tristan Fauvel</h4>
+<p>BaysicLabs, France</p>
+<p>He is a machine learning engineer and co-founder of Baysic Labs, with a PhD in computational neuroscience. He specializes in Bayesian modeling and human-in-the-loop AI, translating theoretical advances into real-world applications in biology, medicine, and industry.</p>
+</div>
+
+
+
+
+</div>
+
+
+
+</div>
+</section>
+
+
+</section>
+
+<section id="institutions" style="background: var(--bg1);">
+<div class="containera">
+
+<h3 class="section-title">Participating Institutions</h3>
+
+<div class="grid" style="align-items:center;text-align:center">
+
+<div class="card"><img src="logos/logo_INRIA.png" style="max-height:70px"></div>
+<div class="card"><img src="logos/ULeoben.png" style="max-height:70px"></div>
+<div class="card"><img src="logos/ULaval.png" style="max-height:70px"></div>
+<div class="card"><img src="logos/UCopenhagen.png" style="max-height:80px"></div>
+<div class="card"><img src="logos/Ucad.png" style="max-height:80px"></div>
+<div class="card"><img src="logos/logo_CRIStAL.png" style="max-height:60px"></div>
+<div class="card"><img src="logos/ULille.jpg" style="max-height:60px"></div>
+<div class="card"><img src="logos/logo_CNRS.png" style="max-height:60px"></div>
+<div class="card"><img src="logos/MARLEL.png" style="max-height:60px"></div>
+
+</div>
+
+<p class="lead" style="margin-top:30px">
+This workshop brings together researchers from reinforcement learning and experimental sciences across multiple disciplines and institutions.
+</p>
+
+</div>
+</section>
+
+<footer>
+Workshop on Reinforcement Learning for Experimental Sciences · Neurips Conference 2026
+</footer>
+
+<script>
+
+const links=document.querySelectorAll("nav a");
+
+links.forEach(link=>{
+link.addEventListener("click",e=>{
+e.preventDefault();
+const target=document.querySelector(link.getAttribute("href"));
+target.scrollIntoView({behavior:"smooth"});
+});
+});
+
+</script>
+
+</body>
+</html>
