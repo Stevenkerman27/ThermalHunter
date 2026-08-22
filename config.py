@@ -36,6 +36,10 @@ DOMAIN_SIZE = (1000.0, 1000.0, 1000.0)
 # 可复现实验配置
 SEED = 1
 EVAL_SEED = 20260816
+# Held-out dynamic-regime suite; distinct from the exploratory steady and
+# dynamic evaluations above.
+DYNAMIC_EVAL_SEED = 20260821
+DYNAMIC_REPLICATION_SEEDS = (11, 22, 33)
 TRAIN_ALGORITHM = "tabular"
 
 # 训练与评估共用起始帧规则。前 60 帧为风场初始瞬态，不参与采样。
@@ -60,8 +64,10 @@ AOA_STEP_DEG = 3.0
 AOA_BINS = int((AOA_MAX_DEG - AOA_MIN_DEG) / AOA_STEP_DEG) + 1 
 
 # 传感器分箱 (Sensor Bins)
-BINS_W_ACCEL = np.array([-0.3, 0.3])
-BINS_DELTA_W = np.array([-0.23, 0.23])
+# Boundaries fitted to the selected steady DQN action map (see
+# trainresult/steady_tuning/dqn_candidate_a_boundary_fit.json).
+BINS_W_ACCEL = np.array([-0.8, 0.25])
+BINS_DELTA_W = np.array([-0.15, 0.6])
 HYSTERESIS_PCT = 0.1  # 施密特触发器迟滞比例
 
 # 时间控制
@@ -110,13 +116,13 @@ GAMMA = 0.98              # 折扣因子
 EPSILON_START = 1.0       # 初始探索率
 EPSILON_END = 0.01        # 最小探索率
 TABULAR_TOTAL_STEPS = 100000
-Q_TABLE_NAME = "q_table_v0.pkl"
+Q_TABLE_NAME = "q_table_dqn_bins_v1.pkl"
 SAVE_PATH = os.path.join(Q_TABLE_DIR, Q_TABLE_NAME)
 
 # ==========================================
 # 训练参数 (Training - DQN)
 # ==========================================
-DQN_LR = 6e-5
+DQN_LR = 1e-4
 DQN_GAMMA = 0.995
 DQN_BATCH_SIZE = 128
 DQN_BUFFER_SIZE = 100000
@@ -124,16 +130,16 @@ DQN_TARGET_UPDATE_INTERVAL = 10 # 用于旧脚本，新脚本使用 DQN_TARGET_F
 DQN_HIDDEN_SIZE = 32
 DQN_EPSILON_START = 1.0
 DQN_EPSILON_END = 0.05
-DQN_TOTAL_TIMESTEPS = 100000
+DQN_TOTAL_TIMESTEPS = 200000
 DQN_TAU = 1.0
-DQN_TARGET_FREQ = 4000
-DQN_EXPLORATION_FRACTION = 0.5
+DQN_TARGET_FREQ = 2000
+DQN_EXPLORATION_FRACTION = 0.3
 DQN_LEARNING_STARTS = 2000
 DQN_TRAIN_FREQ = 4
 DQN_TORCH_THREADS = 1
 DQN_ACTION_MARGIN_K = 0.1  # 动态阈值系数
 DQN_ACTION_MARGIN_MIN = 0.02 # 固定最小阈值
-DQN_SAVE_PATH = os.path.join(Q_TABLE_DIR, "dqn_model.pth") # 用于 train_dqn.py 保存路径
+DQN_SAVE_PATH = os.path.join(Q_TABLE_DIR, "dqn_model_tuned_v1.pth") # 用于 train_dqn.py 保存路径
 SENSOR_STATS_EPISODES = 20
 
 # ==========================================

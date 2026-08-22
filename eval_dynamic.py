@@ -31,8 +31,8 @@ def default_evaluation_plot_path():
     return os.path.join(config.TRAIN_RESULT_DIR, "dynamic_evaluation.png")
 
 
-def make_scenarios(n_episodes):
-    return make_validation_scenarios(n_episodes)
+def make_scenarios(n_episodes, seed=None):
+    return make_validation_scenarios(n_episodes, seed=seed)
 
 
 def make_env(wind_manager, normalizer, discrete_actions=False):
@@ -76,7 +76,8 @@ def load_dynamic_dqn_agent(model_path, device):
 
 def _evaluate_policy_single(policy_name, scenarios, wind_manager, normalizer, agent=None, device=None):
     records = []
-    random_generator = np.random.default_rng(config.EVAL_SEED + 1)
+    evaluation_seed = config.EVAL_SEED if scenario_seed is None else scenario_seed
+    random_generator = np.random.default_rng(evaluation_seed + 1)
     discrete_actions = policy_name in ("Random grid", "Cruise", "DQN")
     env = make_env(wind_manager, normalizer, discrete_actions=discrete_actions)
     try:
@@ -129,9 +130,18 @@ def _evaluate_policy_single(policy_name, scenarios, wind_manager, normalizer, ag
     return records
 
 
-def evaluate_policy(policy_name, scenarios, wind_manager, normalizer, agent=None, device=None):
+def evaluate_policy(
+    policy_name,
+    scenarios,
+    wind_manager,
+    normalizer,
+    agent=None,
+    device=None,
+    scenario_seed=None,
+):
     discrete_actions = policy_name in ("Random grid", "Cruise", "DQN")
-    random_generator = np.random.default_rng(config.EVAL_SEED + 1)
+    evaluation_seed = config.EVAL_SEED if scenario_seed is None else scenario_seed
+    random_generator = np.random.default_rng(evaluation_seed + 1)
     if policy_name == "Random grid":
         def select_action(observations):
             return random_generator.integers(
@@ -160,7 +170,13 @@ def evaluate_policy(policy_name, scenarios, wind_manager, normalizer, agent=None
     else:
         raise ValueError(f"unsupported dynamic policy: {policy_name}")
     return evaluate_dynamic_policy(
-        policy_name, scenarios, wind_manager, select_action, discrete_actions, normalizer
+        policy_name,
+        scenarios,
+        wind_manager,
+        select_action,
+        discrete_actions,
+        normalizer,
+        scenario_seed=scenario_seed,
     )
 
 
@@ -226,8 +242,11 @@ def save_plot(results, plot_path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--n", type=int, default=config.N_EVAL_EPISODES)
+    parser.add_argument("--seed", type=int, default=config.DYNAMIC_EVAL_SEED)
     parser.add_argument("--model", default=default_model_path())
     parser.add_argument("--dqn-model", default=os.path.join(config.Q_TABLE_DIR, "dynamic_dqn_model.pth"))
+    parser.add_argument("--output", default=default_evaluation_csv_path())
+    parser.add_argument("--plot", default=default_evaluation_plot_path())
     args = parser.parse_args()
     if args.n <= 0:
         raise ValueError("n must be positive")
@@ -237,22 +256,21 @@ def main():
         raise FileNotFoundError(f"dynamic DQN model not found: {args.dqn_model}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    scenarios = make_scenarios(args.n)
+    scenarios = make_scenarios(args.n, seed=args.seed)
     ppo_agent, ppo_normalizer = load_ppo_agent(args.model, device)
     dqn_agent, dqn_normalizer = load_dynamic_dqn_agent(args.dqn_model, device)
     wind_manager = RBWindField(dynamic_wind_paths(), memory_mode=True)
     try:
         records = []
-        records.extend(evaluate_policy("Random grid", scenarios, wind_manager, ppo_normalizer))
-        records.extend(evaluate_policy("Cruise", scenarios, wind_manager, ppo_normalizer))
-        records.extend(evaluate_policy("PPO", scenarios, wind_manager, ppo_normalizer, agent=ppo_agent, device=device))
-        records.extend(evaluate_policy("DQN", scenarios, wind_manager, dqn_normalizer, agent=dqn_agent, device=device))
+        records.extend(evaluate_policy("Random grid", scenarios, wind_manager, ppo_normalizer, scenario_seed=args.seed))
+        records.extend(evaluate_policy("Cruise", scenarios, wind_manager, ppo_normalizer, scenario_seed=args.seed))
+        records.extend(evaluate_policy("PPO", scenarios, wind_manager, ppo_normalizer, agent=ppo_agent, device=device, scenario_seed=args.seed))
+        records.extend(evaluate_policy("DQN", scenarios, wind_manager, dqn_normalizer, agent=dqn_agent, device=device, scenario_seed=args.seed))
     finally:
         wind_manager.close()
     results = pd.DataFrame(records)
-    csv_path = default_evaluation_csv_path()
-    results.to_csv(csv_path, index=False)
-    save_plot(results, default_evaluation_plot_path())
+    results.to_csv(args.output, index=False)
+    save_plot(results, args.plot)
     print(results.groupby("policy")[["height_change", "energy_height_change", "return"]].mean().round(3))
 
 

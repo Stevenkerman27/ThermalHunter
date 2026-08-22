@@ -1,0 +1,481 @@
+\documentclass{article}
+
+\makeatletter
+\def\input@path{{Formatting_Instructions_For_NeurIPS_2026/}}
+\makeatother
+\usepackage[dblblindworkshop]{neurips_2026}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{microtype}
+\usepackage{graphicx}
+
+\title{Learning Energy-Harvesting Soaring Policies in Time-Varying Turbulent Wind}
+\workshoptitle{RL for Experimental Sciences Workshop}
+
+\author{Anonymous Authors}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Soaring converts spatial and temporal variation in the atmosphere into usable
+energy, but learning such behavior is difficult when the useful signal is local,
+noisy, and coupled to vehicle dynamics.  We introduce ThermalHunter, a
+controlled numerical platform for studying energy-harvesting soaring in
+time-varying turbulent wind.  The platform couples DNS snapshots of
+Rayleigh--Benard convection at $Ra=5\times10^{7}$ to two complementary flight
+  models: a transparent quasi-steady discrete controller and a higher-fidelity
+  dynamic aerodynamic environment.  In an exploratory steady-regime comparison
+  that reused the model-selection scenarios, a tuned DQN achieved a mean height
+  change of $337.4$ m (bootstrap 95\% CI $[297.4,376.2]$), compared with
+  $-107.1$ m for random control.  We also show that DQN action maps can suggest
+  sensor thresholds for an interpretable tabular Q-learning controller; that
+  derived controller attained $192.3$ m on the same scenarios.  In the
+  higher-fidelity dynamic regime, three PPO
+  replicas evaluated on a new 100-scenario suite had mean height changes of
+  $397.7$, $276.8$, and $378.5$ m, while three dynamic-DQN replicas had
+  $-146.3$, $-121.6$, and $-76.0$ m.  These results support energy-harvesting
+  behavior in the simulated turbulent flow, but not route navigation, safety,
+  real-flight deployment, or sim-to-real transfer.
+\end{abstract}
+
+\section{Introduction}
+
+Unpowered gliders can gain energy by exploiting atmospheric motion.  The
+problem is attractive for reinforcement learning (RL) because the controller
+must repeatedly choose how to trade local lift, turning, and aerodynamic loss
+without an externally supplied trajectory.  Field work has shown that an RL
+controller can support autonomous glider soaring \citep{reddy2018}, while
+simulation studies have demonstrated that learned policies can control gliding
+trajectories with nontrivial aerodynamics \citep{novati2019}.  Those results
+motivate a more controlled question: can an agent learn to harvest energy from
+time-varying, turbulent flow using only quantities that could plausibly be
+available to an onboard controller?
+
+ThermalHunter addresses that question with a numerical experimental platform.
+Its wind input consists of direct numerical simulation (DNS) snapshots of
+Rayleigh--Benard convection at $Ra=5\times10^{7}$.  The wind is therefore
+simulation data, not an atmospheric measurement or a model of a particular
+flight test.  The platform exposes local vertical-wind acceleration and a
+wing-span vertical-wind difference, rather than the complete flow field, and
+uses height change and total-energy-height change as outcomes.  It is designed
+to study energy extraction from a turbulent environment, not to optimize a
+route or demonstrate a safety-critical autonomous aircraft.
+
+The study has two complementary fidelity regimes.  The first combines a
+quasi-steady glider model with discrete angle-of-attack and bank commands.  It
+provides a small, inspectable testbed for comparing tabular Q-learning and DQN.
+The second retains dynamic flight and actuator states and tests whether the
+learned energy-harvesting behavior persists under a richer model.
+The regimes are not algorithmic leaderboards: policies are compared only within
+the environment in which they were trained and evaluated.
+
+This manuscript makes three bounded contributions.  First, it specifies a
+two-fidelity RL testbed driven by a single DNS wind source and matched-scenario
+evaluation.  Second, it establishes a steady-regime baseline in which the DQN
+is evaluated against random and tabular-Q controllers under identical initial
+conditions.  Third, it treats the DQN action map as a representation-design
+tool: its coarse decision boundaries are used to choose transparent sensor bins
+for a tabular controller.  The last comparison is reported as preliminary,
+because it has not yet been replicated across independent training seeds or an
+untouched test suite.
+
+\section{Related work}
+
+RL has been applied to flight control and to decision-making in complex flows.
+Reddy et al.\ \citep{reddy2018} demonstrated glider soaring via RL in the
+field, linking learned control to an operational aircraft setting.  Novati et
+al.\ \citep{novati2019} used deep RL for controlled gliding and perching,
+showing how learning can accommodate aerodynamic control objectives.  In a
+different flow-physics setting, Colabrese et al.\ \citep{colabrese2017}
+showed that RL can discover navigation strategies from local observations in
+vortical flows.  ThermalHunter shares the local-observation premise but changes
+the objective: the primary outcome is energy or altitude gain, not displacement
+toward a target.
+
+The present work also uses a standard value-based deep RL baseline.  DQN
+combines experience replay and a target network to learn action values from
+high-dimensional observations \citep{mnih2015}.  Here its role is deliberately
+modest.  The DQN is not presented as a universal control solution; instead, it
+offers a continuous sensor-state policy against which a compact discretization
+can be inspected.  That comparison exposes a practical experimental question:
+whether a learned action map can help select a lower-dimensional, auditable
+state representation for tabular learning.
+
+\section{ThermalHunter environments}
+\label{sec:environment}
+
+\subsection{Wind input and scaling}
+
+The shared input is a sequence of three-dimensional velocity fields from DNS
+Rayleigh--Benard convection at $Ra=5\times10^{7}$.  At each query, the simulator
+uses trilinear spatial interpolation; the dynamic environment additionally
+interpolates between adjacent temporal frames.  Horizontal position is periodic
+in the $1000\times1000\times1000$ m numerical domain.  To give the flow a
+consistent relation to the vehicle, the simulator scales the three-dimensional
+wind so that its RMS speed is $0.5$ times the trim true airspeed at the median
+angle of attack.  This scaling is a modeling choice, not a claim about an
+observed atmosphere.
+
+Each rollout begins from a randomized horizontal position, altitude, and
+heading.  During the steady-regime evaluation, the initial wind frame is drawn
+from frames 60--99, excluding the first 60 DNS frames.  The initial altitude is
+drawn uniformly from 20--60\% of the domain height.  Episodes terminate at the
+lower or upper altitude bound (10\% or 90\% of the domain height) or when the
+wind sequence ends.  We do not define a 100 m success threshold; results are
+reported as continuous distributions and, in the completed dynamic study,
+will also include termination reasons.
+
+\subsection{Quasi-steady discrete regime}
+\label{sec:steady_environment}
+
+The completed regime represents a glider with a quasi-steady polar.  For an
+angle of attack $\alpha$ and bank angle $\mu$, the model obtains lift and drag
+coefficients from the polar and solves for trim airspeed $V$, glide angle
+$\gamma$, and turn rate.  A control change incurs a multiplicative drag penalty
+of 1.1.  The controller acts every 1 s, with two physics integrations per
+control step.  Wind data advance once every two control steps.  Thus the flight
+model is quasi-steady, but the agent still flies through a time-varying DNS
+sequence.
+
+Actions are the nine combinations of incremental changes
+$(\Delta\alpha,\Delta\mu)\in\{-1,0,1\}^{2}$.  Angle of attack spans
+0--9 degrees in 3-degree increments, and bank spans $-20$ to 20 degrees in
+10-degree increments.  The observation contains the current control indices,
+the local vertical-wind acceleration $a_w$, and the difference in vertical wind
+between the two wing tips $\Delta w$.  The reward is
+\begin{equation}
+  r_t = w_z(t) + 5a_w(t),
+\end{equation}
+where $w_z$ is local vertical wind.  This reward guides learning; it is not the
+primary reported outcome.
+
+Tabular Q-learning receives three hysteretic bins for each sensor.  DQN receives
+the four-component continuous observation after standardizing the sensor
+components with statistics collected from 20 random episodes.  The tabular
+controller uses 100,000 interaction steps, $\gamma=0.98$, and an
+$\epsilon$-greedy schedule from 1.0 to 0.01.  The selected DQN uses 200,000
+interaction steps, learning rate $10^{-4}$, $\gamma=0.995$, a replay buffer of
+100,000 transitions, batch size 128, target-network update frequency 2,000,
+and an exploration fraction of 0.3.  Shared runtime hyperparameters are defined
+only in \texttt{config.py}.
+
+\subsection{Dynamic aerodynamic regime}
+\label{sec:dynamic_environment}
+
+The dynamic regime tests the same local energy-harvesting question after
+removing the quasi-steady lookup approximation.  Its state comprises three-
+dimensional position, ground velocity, angle of attack, bank angle, and a
+continuous wind-frame coordinate.  At each 0.1 s integration substep, the
+environment obtains temporally interpolated wind, forms air-relative velocity,
+and computes lift, drag, and gravity from the same polar used in the discrete
+regime.  A fourth-order Runge--Kutta integrator advances the coupled flight and
+wind-frame state.  This design preserves the DNS input and wind-scaling rule
+while exposing the controller to acceleration, transient airspeed, and
+time-varying aerodynamics absent from the quasi-steady model.
+
+The dynamic observation is
+\begin{equation}
+  o_t=[H_E,\dot H_E^{\mathrm{LP}},\Delta w_n,\mu],
+\end{equation}
+where $H_E=z+V_{\mathrm{TAS}}^2/(2g)$ is total-energy height,
+$\dot H_E^{\mathrm{LP}}$ is a one-second low-pass estimate of its rate of
+change, $\Delta w_n$ is the wingtip wind difference projected onto the lift
+normal, and $\mu$ is bank angle.  The reward is the one-step increment in
+$H_E$.  This choice makes the training signal and primary energy outcome
+directly aligned while retaining altitude change as a complementary, more
+interpretable measure.
+
+The native action has two bounded commands: angle of attack and bank.  Both
+commands pass through first-order actuators with separate time constants and
+rate limits before affecting the vehicle.  PPO receives this continuous action
+interface through a squashed Gaussian policy.  Dynamic DQN instead operates on
+a $3\times3$ grid of angle-of-attack and bank commands.  The two learned
+policies therefore share dynamics, observations, reward, initial-scenario
+sampling, and wind data, but not the same action parameterization.  Their
+comparison is evidence about controller variants in this environment, not an
+action-space-controlled claim that one RL algorithm is intrinsically better.
+
+Episodes terminate on lower or upper altitude boundaries, numerical divergence,
+or exhaustion of the DNS sequence.  A low true airspeed disables the
+aerodynamic-force calculation for that integration substep but does not end the
+episode; numerical divergence is explicitly recorded.  The final dynamic
+analysis will report each termination category.  In particular, termination at
+the upper altitude boundary indicates that the simulated episode ended after
+energy gain, but does not establish sustained soaring or a safety property.
+
+\section{Experimental protocol}
+\label{sec:protocol}
+
+The steady study compares random control, tabular Q-learning, and DQN on 100
+matched scenarios.  A scenario fixes the start frame, initial position,
+altitude, and heading; all policies in that row receive the same scenario.
+Scenario generation uses evaluation seed 20260816, and the random-policy action
+stream is separately seeded.  The reported outcome is final minus initial
+height in metres.  We report the mean, median, sample standard deviation, and
+percentile bootstrap 95\% confidence interval for the mean using 20,000
+resamples.  Matched-scenario differences are summarized with the same bootstrap
+procedure.
+
+The released steady artifacts contain one selected training run per trainable
+policy under training seed 1.  Consequently, uncertainty intervals describe the
+finite matched-scenario sample, not variation over training runs.  We reserve
+multi-seed retraining and a separately generated test-scenario suite as a
+mandatory follow-up before making confirmatory comparative claims.
+
+\subsection{DQN-informed sensor bins}
+
+After training the selected DQN, we sampled its action map on a standardized
+$21\times21$ grid over $(a_w,\Delta w)$ and fit two thresholds per sensor to
+its preferred action components.  The resulting raw-sensor boundaries are
+$[-0.8,0.25]$ for $a_w$ and $[-0.15,0.60]$ for $\Delta w$; the action-map fit
+error was 0.088.  These thresholds replace the original tabular bins, while
+the tabular training budget and evaluation protocol remain unchanged.  This is
+a representation-design experiment, not policy distillation: the tabular agent
+is trained independently from a fresh Q table.
+
+The procedure is exploratory because the tuned DQN and the derived bins were
+selected using the same 100 scenarios subsequently summarized below.  The
+derived-bin result is included to document the hypothesis and to guide the
+next experiment, not as an out-of-sample comparison.
+
+\subsection{Dynamic-regime setup}
+\label{sec:dynamic_protocol}
+
+Dynamic PPO and DQN use the four-dimensional observation above, with each
+dimension standardized by random-rollout statistics stored with the resulting
+model artifact.  PPO is trained for 100,000 transitions in a 64-environment
+batch, using 16-step rollouts, GAE, clipped policy updates, and an entropy
+coefficient annealed from 0.01 to zero.  Dynamic DQN is trained for 150,000
+transitions with a 100,000-transition replay buffer, batch size 64, Double-DQN
+targets, Huber loss, and a 3-by-3 action grid.  The matched evaluation includes
+random-grid and fixed-command cruise controls as baselines, together with PPO
+and DQN.  For every scenario, we retain height change, total-energy-height
+change, episode length, and termination reason.
+
+The existing 100-scenario dynamic result is an exploratory checkpoint.  The
+completion experiment trained three independent replicas of each policy with
+seeds 11, 22, and 33, then evaluated all frozen replicas on a new scenario
+suite generated with evaluation seed 20260821.  This separates model selection
+from the paper's comparative estimates.  Aggregation treats training seed as
+the independent replication unit and reports scenario distributions within each
+seed; it does not pool all episodes across seeds as though they were independent
+training runs.
+
+\section{Results: quasi-steady discrete regime}
+\label{sec:steady_results}
+
+The original matched-scenario comparison shows a modest ordering in favor of
+the continuous-observation DQN.  Its mean height change was 42.4 m, whereas
+random control lost 107.1 m on average (Table~\ref{tab:steady_baseline}).  The
+paired DQN-minus-random difference was 149.6 m (bootstrap 95\% CI
+$[74.2,224.4]$).  The corresponding tabular-Q-minus-random difference was
+102.0 m (95\% CI $[25.7,178.3]$).  The DQN mean confidence interval still
+crosses zero, and all three policies show substantial scenario-to-scenario
+variation.  This baseline therefore supports an energy-harvesting signal in the
+matched sample but does not establish reliable performance across training
+seeds.
+
+\begin{table}[t]
+  \caption{Original steady-regime evaluation on 100 matched scenarios. Height
+  change is final minus initial altitude in metres. Intervals are percentile
+  bootstrap 95\% confidence intervals for the mean.}
+  \label{tab:steady_baseline}
+  \centering
+  \small
+  \begin{tabular}{lrrrr}
+    \toprule
+    Policy & Mean [95\% CI] & Median & SD & $n$ \\
+    \midrule
+    Random & $-107.1$ [$-162.8,-48.7$] & $-186.2$ & $292.8$ & 100 \\
+    Tabular Q & $-5.1$ [$-72.0,64.0$] & $-148.4$ & $348.7$ & 100 \\
+    DQN & $42.4$ [$-24.8,111.4$] & $49.2$ & $349.4$ & 100 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Hyperparameter tuning substantially improved the selected DQN on the same
+scenario set, yielding a mean height change of 337.4 m (95\% CI
+$[297.4,376.2]$).  The DQN-informed discretization also improved the tabular
+result to 192.3 m (95\% CI $[130.0,252.5]$; Table~\ref{tab:exploratory}).  The
+median of the derived-bin tabular controller, 280.5 m, makes the improvement
+visible beyond the mean.  However, these numbers must not be read as a
+confirmatory superiority result.  The process selected both the DQN candidate
+and the sensor thresholds using this evaluation suite, and it used a single
+training seed.  The appropriate interpretation is that DQN action boundaries
+are a promising hypothesis for designing a compact tabular state space.
+
+\begin{table}[t]
+  \caption{Exploratory steady-regime results on the same 100 scenarios used
+  during selection. These results are not held-out evidence.}
+  \label{tab:exploratory}
+  \centering
+  \small
+  \begin{tabular}{lrrrr}
+    \toprule
+    Policy & Mean [95\% CI] & Median & SD & $n$ \\
+    \midrule
+    Tuned DQN & $337.4$ [$297.4,376.2$] & $352.1$ & $201.0$ & 100 \\
+    DQN-informed tabular Q & $192.3$ [$130.0,252.5$] & $280.5$ & $315.5$ & 100 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Results: dynamic aerodynamic regime}
+\label{sec:dynamic_results}
+
+The dynamic evaluation used 100 matched scenarios generated with evaluation
+seed 20260821, which was not used to select a model or tune a hyperparameter.
+Each learned controller was trained independently with seeds 11, 22, and 33;
+all six frozen artifacts were then evaluated sequentially against the same
+scenario rows.  The replication unit is the training seed, while the 100
+scenarios quantify within-replica variation.  Table~\ref{tab:dynamic_results}
+reports the mean, median, sample standard deviation, and scenario-bootstrap
+interval for each replica.  Figure~\ref{fig:dynamic_results} shows the full
+matched-scenario distributions.
+
+PPO produced positive mean height and total-energy-height changes for all three
+training seeds.  Its mean height changes were $397.7$, $276.8$, and $378.5$ m,
+with a mean of seed means of $351.0$ m and a between-seed standard deviation of
+$65.0$ m.  The corresponding total-energy-height changes were $396.5$,
+$278.1$, and $378.6$ m.  PPO therefore preserved energy gain after replacing
+the quasi-steady lookup with integrated flight and actuator dynamics in this
+held-out suite.
+
+Dynamic DQN was less consistent in absolute energy gain.  Its three mean
+height changes were $-146.3$, $-121.6$, and $-76.0$ m, and its mean of seed
+means was $-114.6$ m (between-seed SD $35.7$ m).  Its mean total-energy-height
+change was $-98.2$ m (between-seed SD $36.3$ m).  Its three-seed average was
+less negative than the Random-grid baseline ($-125.1$ m height, $-117.6$ m
+total-energy height) and the fixed Cruise baseline ($-167.2$ m height,
+$-165.6$ m total-energy height),
+but did not yield net positive energy-height change.  Because PPO uses a
+continuous two-command action and DQN uses a $3\times3$ discrete grid, this is
+a comparison of controller variants with different action interfaces, not a
+pure algorithm ranking.
+
+Termination patterns provide important context.  PPO reached the upper
+altitude boundary in 45--64\% of scenarios across seeds, with wind-end
+fractions of 31--46\%.  DQN reached the lower altitude boundary in 50--65\% of
+scenarios and the upper boundary in only 4--5\%; numerical-divergence fractions
+were at most 1\%.  Random grid and Cruise reached the lower boundary in 66\%
+and 73\% of scenarios, respectively.  An upper-bound termination records that
+an episode ended after gaining energy in the finite domain; it is not evidence
+of sustained soaring, safety, or indefinite endurance.
+
+\begin{table}[t]
+  \caption{Held-out dynamic evaluation on 100 matched scenarios. Each learned
+  row is one independent training seed; intervals are percentile bootstrap 95\%
+  CIs for the within-seed scenario mean. Height and total-energy-height changes
+  are in metres.}
+  \label{tab:dynamic_results}
+  \centering
+  \small
+  \begin{tabular}{llrrrr}
+    \toprule
+    Policy & Seed & Height mean [95\% CI] & Energy mean & Median & SD \\
+    \midrule
+    Random grid & -- & $-125.1$ [$-186.3,-59.9$] & $-117.6$ & $-222.3$ & $322.7$ \\
+    Cruise & -- & $-167.2$ [$-216.6,-114.0$] & $-165.6$ & $-238.5$ & $261.1$ \\
+    DQN & 11 & $-146.3$ [$-197.4,-92.6$] & $-131.1$ & $-208.3$ & $265.9$ \\
+    DQN & 22 & $-121.6$ [$-173.1,-67.9$] & $-104.3$ & $-198.4$ & $272.1$ \\
+    DQN & 33 & $-76.0$ [$-132.5,-17.3$] & $-59.3$ & $-173.7$ & $297.7$ \\
+    PPO & 11 & $397.7$ [$351.3,440.2$] & $396.5$ & $442.8$ & $229.1$ \\
+    PPO & 22 & $276.8$ [$212.9,338.6$] & $278.1$ & $399.7$ & $326.7$ \\
+    PPO & 33 & $378.5$ [$335.4,418.7$] & $378.6$ & $417.8$ & $212.8$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{../trainresult/dynamic_multiseed/dynamic_multiseed_results.png}
+  \caption{Matched-scenario distributions for the held-out dynamic evaluation.
+  Points retain scenario-level variation; learned-policy points include all
+  three training-seed replicas.}
+  \label{fig:dynamic_results}
+\end{figure}
+
+\section{Discussion and limitations}
+\label{sec:discussion}
+
+The two fidelity regimes form a progression rather than a cross-regime
+leaderboard.  The quasi-steady environment isolates local energy-harvesting
+decisions with transparent discrete dynamics and was useful for exposing a
+DQN-informed tabular representation.  The dynamic environment then tests the
+same DNS-driven task with continuous-time flight integration, temporal wind
+interpolation, actuator lag, and a reward defined directly by total-energy
+height.  The held-out dynamic results show that PPO's positive energy-height
+signal survives this increase in model fidelity across all three training
+seeds.  Dynamic DQN remained negative in absolute energy-height change, despite
+a less-negative three-seed average than the non-learning baselines, suggesting
+that the coarse action grid or value-learning configuration is not yet
+sufficient for the richer control problem.  Since the action interfaces differ,
+this observation should
+not be interpreted as an intrinsic PPO-versus-DQN result.
+
+Several limitations bound the claim.  The DNS flow is a controlled numerical
+input at $Ra=5\times10^7$, scaled to the simulated vehicle; it is not an
+atmospheric measurement.  The glider remains a point-mass model driven by a
+fixed aerodynamic polar, and the dynamic observation contains only local
+quantities rather than the full flow field.  We used three training seeds and
+one held-out 100-scenario suite; the bootstrap intervals quantify scenario
+sampling, whereas the small between-seed sample limits inference about training
+variation.  Upper-altitude termination is common for PPO and truncation at the
+end of the finite wind sequence is also common, so the results demonstrate
+energy gain over finite episodes rather than sustained safe soaring.  No route
+objective, collision model, deployment constraint, real-flight experiment, or
+sim-to-real transfer is evaluated.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+ThermalHunter provides a two-fidelity, DNS-driven platform for studying
+energy-harvesting soaring in time-varying turbulent wind.  In the completed
+held-out dynamic experiment, PPO replicas achieved positive height and
+total-energy-height changes across all three training seeds, while dynamic DQN
+improved over Random-grid and Cruise controls without achieving positive mean
+energy gain.  The results support the narrower claim that reinforcement
+learning can discover energy-harvesting behavior in this controlled numerical
+environment.  They do not establish route navigation, safety, deployment
+readiness, sustained soaring, or transfer beyond the simulated flow.  Future
+work should expand training-seed replication, vary the held-out DNS scenarios,
+and test action representations and dynamic models under explicitly matched
+control interfaces.
+
+\begin{thebibliography}{9}
+
+\bibitem[Colabrese et al.(2017)]{colabrese2017}
+S. Colabrese, K. Gustavsson, A. Celani, and L. Biferale.
+Flow navigation by smart microswimmers via reinforcement learning.
+\emph{Physical Review Letters}, 118:158004, 2017.
+doi: \url{https://doi.org/10.1103/PhysRevLett.118.158004}.
+
+\bibitem[Mnih et al.(2015)]{mnih2015}
+V. Mnih, K. Kavukcuoglu, D. Silver, A. A. Rusu, J. Veness, M. G. Bellemare,
+A. Graves, M. Riedmiller, A. K. Fidjeland, G. Ostrovski, et al.
+Human-level control through deep reinforcement learning.
+\emph{Nature}, 518:529--533, 2015.
+doi: \url{https://doi.org/10.1038/nature14236}.
+
+\bibitem[Novati et al.(2019)]{novati2019}
+G. Novati, H. Mahadevan, and P. Koumoutsakos.
+Controlled gliding and perching through deep-reinforcement-learning.
+\emph{Physical Review Fluids}, 4:093902, 2019.
+doi: \url{https://doi.org/10.1103/PhysRevFluids.4.093902}.
+
+\bibitem[Reddy et al.(2018)]{reddy2018}
+G. Reddy, A. F. E. Schaefer, M. D. T. P. de~Wilde, C. A. V. de~Gelder,
+and I. D. Couzin.
+Glider soaring via reinforcement learning in the field.
+\emph{Nature}, 562:236--239, 2018.
+doi: \url{https://doi.org/10.1038/s41586-018-0533-0}.
+
+\end{thebibliography}
+
+\end{document}

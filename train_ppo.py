@@ -123,8 +123,9 @@ def dynamic_wind_paths():
     return paths
 
 
-def make_validation_scenarios(n_episodes):
-    rng = np.random.default_rng(config.EVAL_SEED)
+def make_validation_scenarios(n_episodes, seed=None):
+    scenario_seed = config.EVAL_SEED if seed is None else seed
+    rng = np.random.default_rng(scenario_seed)
     scenarios = []
     for _ in range(n_episodes):
         x, y = rng.uniform(0.2, 0.8, size=2) * np.asarray(config.DOMAIN_SIZE[:2])
@@ -184,8 +185,15 @@ def annealed_entropy_coefficient(initial_coefficient, iteration, num_iterations)
 
 
 def evaluate_dynamic_policy(
-    policy_name, scenarios, wind_manager, action_selector, discrete_actions, normalizer
+    policy_name,
+    scenarios,
+    wind_manager,
+    action_selector,
+    discrete_actions,
+    normalizer,
+    scenario_seed=None,
 ):
+    reset_seed = config.EVAL_SEED if scenario_seed is None else scenario_seed
     records = []
     for start in range(0, len(scenarios), config.DYNAMIC_NUM_ENVS):
         batch_scenarios = scenarios[start:start + config.DYNAMIC_NUM_ENVS]
@@ -194,7 +202,7 @@ def evaluate_dynamic_policy(
         )
         try:
             raw_observations, _ = env.reset(
-                seed=config.EVAL_SEED + start,
+                seed=reset_seed + start,
                 options=batch_scenarios,
             )
             observations = normalized_dynamic_observation(raw_observations, normalizer)

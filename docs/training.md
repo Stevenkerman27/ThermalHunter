@@ -22,7 +22,7 @@ python train_dqn.py --total-timesteps 1000
 
 训练开始前，`analyze_bins.collect_sensor_stats()` 用同一套起始帧规则重建 `trainresult/sensor_stats.json`；随后创建一个 `SyncVectorEnv`，其数量必须为 1。DQN 的输入是 4 维归一化连续观测，输出 9 个控制动作的 Q 值。训练使用经验回放、epsilon-greedy、MSE TD 损失和目标网络更新；可在 GPU 上运行。
 
-默认最终模型为 `q_table/dqn_model.pth`，逐回合统计为 `trainresult/dqn_train_stats.csv`，训练曲线为 `trainresult/dqn_train_result.png`，TensorBoard 与阶段检查点写入 `runs/`。参数可显式覆盖模型、CSV、统计和图表路径，供奖励扫描隔离产物。
+默认最终模型为 `q_table/dqn_model_tuned_v1.pth`，逐回合统计为 `trainresult/dqn_train_stats.csv`，训练曲线为 `trainresult/dqn_train_result.png`，TensorBoard 与阶段检查点写入 `runs/`。参数可显式覆盖模型、CSV、统计和图表路径，供奖励扫描隔离产物。
 
 ## 动态 PPO
 
@@ -46,7 +46,7 @@ python train_dynamic_dqn.py --total-timesteps 1000
 
 默认模型、逐回合 CSV 和 TensorBoard 分别为 `q_table/dynamic_dqn_model.pth`、`trainresult/dynamic_dqn_training.csv` 和 `trainresult/dynamic_dqn_runs/`。训练过程中不执行策略验证，只按 `DYNAMIC_CHECKPOINT_INTERVAL` 保存 checkpoint；完整评估由独立评估命令执行。
 
-动态 DQN 超参数实验以固定评估场景中的 `height_change` 均值为主指标，目标为超过 `100 m`。训练 CSV 和 TD loss 只用于筛选候选模型；候选模型再用 `python eval.py --dynamic --n 100` 做完整确认。实验允许覆盖默认动态 DQN 模型和日志产物。
+动态 DQN 超参数实验以固定评估场景中的 `height_change` 与 `energy_height_change` 分布为筛选依据。训练 CSV 和 TD loss 只用于筛选候选模型；候选模型再用 `python eval.py --dynamic --n 100` 做完整确认。报告必须保留样本数、离散程度和终止原因，且不使用单一高度阈值定义成功。实验允许覆盖默认动态 DQN 模型和日志产物。
 
 ## 可复现实验条件
 

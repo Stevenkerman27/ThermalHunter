@@ -4,7 +4,7 @@
 
 ## 共同基础
 
-`RBWindField` 按自然序串联 `wind/snapshots_s*.h5`，读取 `tasks/ux`、`tasks/uy`、`tasks/uz` 和 `tasks/buoyancy`。空间风速通过三线性插值得到；`get_wind_at_frame()` 还能在相邻时间帧间线性插值。`memory_mode=True` 会读取整组数据到内存，`False` 保留 HDF5 数据集句柄按需读取。调用方负责在完成后关闭拥有的风场管理器。
+`RBWindField` 按自然序串联 `wind/snapshots_s*.h5`，读取 `tasks/ux`、`tasks/uy`、`tasks/uz` 和 `tasks/buoyancy`。当前风场来自 `Ra = 5e7` Rayleigh--Benard 对流的 DNS 数据。空间风速通过三线性插值得到；`get_wind_at_frame()` 还能在相邻时间帧间线性插值。`memory_mode=True` 会读取整组数据到内存，`False` 保留 HDF5 数据集句柄按需读取。调用方负责在完成后关闭拥有的风场管理器。
 
 `GliderPhysics` 从 `glider.polar` 的 `AoA`、`CL`、`CDtot` 列插值得到气动系数。风速会被统一缩放，使整组三维速度样本的 RMS 与中位迎角、零滚转稳态空速的比值等于 `config.WIND_RMS_TO_TAS_RATIO`。此倍率只改变风速幅值。
 
